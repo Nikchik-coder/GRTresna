@@ -39,6 +39,15 @@ struct SimulationParameters<method_t, matter_t>::BaseParams
     std::string error_filename;
     Real G_Newton;
     int verbosity;
+    // Outer (nonlinear) Newton-iteration robustness, used mainly for exotic
+    // (negative-energy) matter where the linearised psi-operator can become
+    // indefinite and a full Newton step overshoots psi into the unphysical
+    // psi <= 0 region (pow(psi, -7) -> NaN). psi_relaxation in (0, 1] damps the
+    // applied correction; psi_floor (> 0) clamps psi_reg from below so psi
+    // stays positive. Defaults reproduce the original undamped full-step
+    // behaviour.
+    Real psi_relaxation;
+    Real psi_floor;
 };
 
 template <class method_t, class matter_t>
@@ -130,4 +139,8 @@ void SimulationParameters<method_t, matter_t>::read_base_params(GRParmParse &pp)
 
     pp.load("G_Newton", base_params.G_Newton, 1.0);
     pp.load("verbosity", base_params.verbosity, 1);
+
+    // Nonlinear-iteration robustness (default = original undamped behaviour).
+    pp.load("psi_relaxation", base_params.psi_relaxation, 1.0);
+    pp.load("psi_floor", base_params.psi_floor, -1.0);
 }

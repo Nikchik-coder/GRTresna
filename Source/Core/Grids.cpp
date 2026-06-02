@@ -177,7 +177,8 @@ void Grids::define_operator(MultilevelLinearOp<FArrayBox> &mlOp,
 
 void Grids::update_psi0(Vector<LevelData<FArrayBox> *> multigrid_vars,
                         Vector<LevelData<FArrayBox> *> constraint_vars,
-                        bool deactivate_zero_mode)
+                        bool deactivate_zero_mode, Real relaxation,
+                        Real psi_floor)
 {
     for (int ilev = 0; ilev < m_grid_params.numLevels; ilev++)
     {
@@ -227,30 +228,45 @@ void Grids::update_psi0(Vector<LevelData<FArrayBox> *> multigrid_vars,
             {
                 IntVect iv = bit();
 
-                // Update constraint variables for the linear step
-                multigrid_vars_box(iv, c_psi_reg) +=
-                    constraint_vars_box(iv, c_psi);
+                // Update constraint variables for the linear step. psi is
+                // always an incremental (Newton) correction; under-relax it and
+                // optionally clamp psi_reg from below so psi stays positive for
+                // exotic matter (a full undamped step can overshoot into
+                // psi <= 0 where pow(psi, -7) is NaN).
+                Real new_psi_reg = multigrid_vars_box(iv, c_psi_reg) +
+                                   relaxation * constraint_vars_box(iv, c_psi);
+                if (psi_floor > 0.0 && new_psi_reg < psi_floor)
+                {
+                    new_psi_reg = psi_floor;
+                }
+                multigrid_vars_box(iv, c_psi_reg) = new_psi_reg;
                 if (deactivate_zero_mode)
                 {
+                    // Incremental updates: damp the increment.
                     multigrid_vars_box(iv, c_V1_0) +=
-                        constraint_vars_box(iv, c_V1);
+                        relaxation * constraint_vars_box(iv, c_V1);
                     multigrid_vars_box(iv, c_V2_0) +=
-                        constraint_vars_box(iv, c_V2);
+                        relaxation * constraint_vars_box(iv, c_V2);
                     multigrid_vars_box(iv, c_V3_0) +=
-                        constraint_vars_box(iv, c_V3);
+                        relaxation * constraint_vars_box(iv, c_V3);
                     multigrid_vars_box(iv, c_U_0) +=
-                        constraint_vars_box(iv, c_U);
+                        relaxation * constraint_vars_box(iv, c_U);
                 }
                 else
                 {
+                    // Direct (replacement) solve: blend towards the new value.
                     multigrid_vars_box(iv, c_V1_0) =
-                        constraint_vars_box(iv, c_V1);
+                        (1.0 - relaxation) * multigrid_vars_box(iv, c_V1_0) +
+                        relaxation * constraint_vars_box(iv, c_V1);
                     multigrid_vars_box(iv, c_V2_0) =
-                        constraint_vars_box(iv, c_V2);
+                        (1.0 - relaxation) * multigrid_vars_box(iv, c_V2_0) +
+                        relaxation * constraint_vars_box(iv, c_V2);
                     multigrid_vars_box(iv, c_V3_0) =
-                        constraint_vars_box(iv, c_V3);
+                        (1.0 - relaxation) * multigrid_vars_box(iv, c_V3_0) +
+                        relaxation * constraint_vars_box(iv, c_V3);
                     multigrid_vars_box(iv, c_U_0) =
-                        constraint_vars_box(iv, c_U);
+                        (1.0 - relaxation) * multigrid_vars_box(iv, c_U_0) +
+                        relaxation * constraint_vars_box(iv, c_U);
                 }
             }
         }

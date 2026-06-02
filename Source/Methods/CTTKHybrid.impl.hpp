@@ -18,6 +18,15 @@ template <typename matter_t> struct CTTKHybrid<matter_t>::params_t
     bool use_compact_Vi_ansatz;
     Real regularised_part_psi;
     bool deactivate_zero_mode;
+    // Maximal slicing (K = 0). The default CTTK(Hybrid) ansatz sets
+    // K = sign*sqrt(24 pi G rho + ...), which is imaginary wherever rho < 0, so
+    // it cannot represent EXOTIC (negative-energy) matter. With maximal_slicing
+    // we instead fix K = 0 and move the full matter energy into the elliptic
+    // psi-solve as a source term (a standard York/Lichnerowicz CMC solve). This
+    // handles rho of either sign with no square root of a negative number, at
+    // the cost of solving a (possibly indefinite, for strong exotic) elliptic
+    // problem -- see the under-relaxation/floor in Grids::update_psi0.
+    bool maximal_slicing;
 };
 
 template <typename matter_t>
@@ -42,6 +51,7 @@ void CTTKHybrid<matter_t>::read_params(GRParmParse &pp,
     pp.load("regularised_part_psi", a_method_params.regularised_part_psi, 1.0);
     pp.load("deactivate_zero_mode", a_method_params.deactivate_zero_mode,
             false);
+    pp.load("maximal_slicing", a_method_params.maximal_slicing, false);
 }
 
 template <typename matter_t>
@@ -95,11 +105,21 @@ void CTTKHybrid<matter_t>::solve_analytic(
                 matter->compute_emtensor(iv, a_dx, multigrid_vars_box);
 
             // Set value for K
-            Real K_0_squared = 24.0 * M_PI * G_Newton * emtensor.rho;
+            if (m_method_params.maximal_slicing)
+            {
+                // K = 0 everywhere. The matter energy density (any sign) is
+                // absorbed by the elliptic psi-solve instead of by K, so
+                // exotic rho < 0 no longer forces sqrt of a negative number.
+                multigrid_vars_box(iv, c_K_0) = 0.0;
+            }
+            else
+            {
+                Real K_0_squared = 24.0 * M_PI * G_Newton * emtensor.rho;
 
-            // be careful if at a point K = 0, may have discontinuity
-            multigrid_vars_box(iv, c_K_0) =
-                m_method_params.sign_of_K * sqrt(K_0_squared);
+                // be careful if at a point K = 0, may have discontinuity
+                multigrid_vars_box(iv, c_K_0) =
+                    m_method_params.sign_of_K * sqrt(K_0_squared);
+            }
 
             // set values for \bar Aij_0
             multigrid_vars_box(iv, c_A11_0) = Aij_reg[0][0] + Aij_bh[0][0];
@@ -181,9 +201,28 @@ void CTTKHybrid<matter_t>::set_elliptic_terms(
             Tensor<1, Real, SpaceDim> d1_K;
             derivs.get_d1(d1_K, iv, multigrid_vars_box, c_K_0);
 
-            // rhs terms, K is set to cancel matter terms only
-            rhs_box(iv, c_psi) =
-                -0.125 * A2_0 * pow(psi_0, -7.0) - laplacian_psi_reg;
+            // rhs terms.
+            if (m_method_params.maximal_slicing)
+            {
+                // K = 0, so the matter energy is NOT absorbed by K and must be
+                // sourced here. The Hamiltonian constraint
+                //   K^2 = 24 pi G rho + 1.5 A^2 psi^-12 + 12 (lap psi_reg) psi^-5
+                // with K = 0 becomes, after multiplying by -psi^5/12,
+                //   lap psi_reg + 2 pi G rho psi^5 + 0.125 A^2 psi^-7 = 0,
+                // i.e. F(psi) = lap psi_reg + g(psi) = 0 with
+                //   g(psi) = 2 pi G rho psi^5 + 0.125 A^2 psi^-7.
+                // Newton step (lagged rho): rhs = -g(psi_0) - lap psi_reg,
+                //                           aCoef = g'(psi_0)  (added below).
+                rhs_box(iv, c_psi) =
+                    -2.0 * M_PI * G_Newton * emtensor.rho * pow(psi_0, 5.0) -
+                    0.125 * A2_0 * pow(psi_0, -7.0) - laplacian_psi_reg;
+            }
+            else
+            {
+                // rhs terms, K is set to cancel matter terms only
+                rhs_box(iv, c_psi) =
+                    -0.125 * A2_0 * pow(psi_0, -7.0) - laplacian_psi_reg;
+            }
 
             // Get d_i V_i and laplacians
             Tensor<2, Real, SpaceDim> di_Vi;
@@ -235,8 +274,18 @@ void CTTKHybrid<matter_t>::set_elliptic_terms(
                 rhs_box(iv, c_U) += -laplacian_U;
             }
 
-            // add the aCoef term
-            aCoef_box(iv, c_psi) += -0.875 * A2_0 * pow(psi_0, -8.0);
+            // add the aCoef term (Jacobian g'(psi_0) of the psi source)
+            if (m_method_params.maximal_slicing)
+            {
+                // g'(psi) = 10 pi G rho psi^4 - 0.875 A^2 psi^-8
+                aCoef_box(iv, c_psi) +=
+                    10.0 * M_PI * G_Newton * emtensor.rho * pow(psi_0, 4.0) -
+                    0.875 * A2_0 * pow(psi_0, -8.0);
+            }
+            else
+            {
+                aCoef_box(iv, c_psi) += -0.875 * A2_0 * pow(psi_0, -8.0);
+            }
         }
     }
 }

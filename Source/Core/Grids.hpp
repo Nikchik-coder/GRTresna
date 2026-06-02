@@ -80,7 +80,8 @@ class Grids
 
     void update_psi0(Vector<LevelData<FArrayBox> *> multigrid_vars,
                      Vector<LevelData<FArrayBox> *> constraint_vars,
-                     bool deactivate_zero_mode);
+                     bool deactivate_zero_mode, Real relaxation = 1.0,
+                     Real psi_floor = -1.0);
 
     params_t m_grid_params;
 

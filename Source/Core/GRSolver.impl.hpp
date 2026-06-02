@@ -116,7 +116,9 @@ int GRSolver<method_t, matter_t>::run()
         solver.solve(constraint_vars, rhs);
 
         grids->update_psi0(multigrid_vars, constraint_vars,
-                           params.method_params.deactivate_zero_mode);
+                           params.method_params.deactivate_zero_mode,
+                           params.base_params.psi_relaxation,
+                           params.base_params.psi_floor);
 
         bool filling_solver_vars = true;
         grids->fill_ghosts_correct_coarse(multigrid_vars, filling_solver_vars);
