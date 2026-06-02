@@ -97,6 +97,36 @@ dpi = 1e-1
 dpi_length = 5.0
 scalar_mass = 1e-1
 
+# ---- Momentum-carrying scalar "cloud" (optional) ----------------------------
+# Adds a localised lump on top of the spherical profile above and builds its
+# conjugate momentum Pi so the configuration carries net linear and/or angular
+# momentum. The momentum constraint solver then solves for V_i to satisfy the
+# momentum constraint (S_i = -Pi d_i phi != 0). All params default to off, so
+# leaving them commented reproduces the legacy spherical (zero-momentum) data.
+#
+# lump_amp      : amplitude of the lump (0 => disabled, the default)
+# lump_width    : Gaussian width of the lump
+# lump_center   : lump centre relative to the grid centre (x y z)
+# lump_velocity : boost velocity v (x y z) -> net linear momentum P_i ~ v_i
+# lump_omega    : rigid rotation rate about z -> net angular momentum L_z
+# lump_mode     : azimuthal modulation m (0 axisymmetric; >=1 required for L_z)
+#
+# Example: a lump boosted along +x (linear momentum / frame dragging)
+# lump_amp = 1e-1
+# lump_width = 5.0
+# lump_center = 0.0 0.0 0.0
+# lump_velocity = 0.2 0.0 0.0
+# lump_omega = 0.0
+# lump_mode = 0
+#
+# Example: an m=1 lump spinning about z (angular momentum)
+# lump_amp = 1e-1
+# lump_width = 5.0
+# lump_center = 0.0 0.0 0.0
+# lump_velocity = 0.0 0.0 0.0
+# lump_omega = 0.1
+# lump_mode = 1
+
 # Conformal factor psi
 # Related to cosmo scale factor a = psi^2
 # Usually set to 1.0 for asymptotically flat space

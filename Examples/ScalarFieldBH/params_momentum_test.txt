@@ -1,0 +1,53 @@
+# Quick smoke test: boosted scalar-field lump carrying net linear momentum.
+output_path = OutputsMomTest/
+output_filename = MomTest.3d.hdf5
+error_filename = MomTest_Ham_and_Mom_errors
+
+# Small, single-level grid for a fast test
+N = 32 32 32
+L = 128
+max_level = 0
+regrid_radius = 10
+block_factor = 16
+max_grid_size = 16
+
+is_periodic = 0 0 0
+use_compact_Vi_ansatz = 1
+hi_boundary = 0 0 0
+lo_boundary = 0 0 0
+
+G_Newton = 1.0
+
+# Legacy spherical profile turned off so the lump is the sole matter source
+phi_0 = 0.0
+dphi = 0.0
+dphi_length = 5.0
+pi_0 = 0.0
+dpi = 0.0
+dpi_length = 5.0
+scalar_mass = 1e-1
+
+# Momentum-carrying lump boosted along +x
+lump_amp = 1e-1
+lump_width = 8.0
+lump_center = 0.0 0.0 0.0
+lump_velocity = 0.2 0.0 0.0
+lump_omega = 0.0
+lump_mode = 0
+
+# No black holes for this matter-momentum test
+regularised_part_psi = 1.0
+sign_of_K = 1
+
+bh1_bare_mass = 0.0
+bh1_spin = 0.0 0.0 0.0
+bh1_momentum = 0.0 0.0 0.0
+bh1_offset = 0.0 0.0 0.0
+
+bh2_bare_mass = 0.0
+bh2_spin = 0.0 0.0 0.0
+bh2_momentum = 0.0 0.0 0.0
+bh2_offset = 0.0 0.0 0.0
+
+max_NL_iterations = 20
+deactivate_zero_mode = 0
