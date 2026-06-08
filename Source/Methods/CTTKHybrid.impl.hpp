@@ -11,6 +11,7 @@
 #include "GRParmParse.hpp"
 #include "Tensor.hpp"
 #include "TensorAlgebra.hpp"
+#include <cmath>
 
 template <typename matter_t> struct CTTKHybrid<matter_t>::params_t
 {
@@ -27,6 +28,14 @@ template <typename matter_t> struct CTTKHybrid<matter_t>::params_t
     // the cost of solving a (possibly indefinite, for strong exotic) elliptic
     // problem -- see the under-relaxation/floor in Grids::update_psi0.
     bool maximal_slicing;
+    // Floor used only when evaluating the nonlinear maximal-slicing source.
+    // The update step has its own floor; this one prevents pow(psi, -7/-8)
+    // from seeing a non-positive or non-finite iterate before that update.
+    Real maximal_psi_floor;
+    // Optional cap on the psi Jacobian contribution. Sign-changing rho can make
+    // the Newton linearisation too stiff for AMR multigrid; a positive cap keeps
+    // the operator finite while preserving the residual source term.
+    Real maximal_jacobian_cap;
 };
 
 template <typename matter_t>
@@ -52,6 +61,8 @@ void CTTKHybrid<matter_t>::read_params(GRParmParse &pp,
     pp.load("deactivate_zero_mode", a_method_params.deactivate_zero_mode,
             false);
     pp.load("maximal_slicing", a_method_params.maximal_slicing, false);
+    pp.load("psi_floor", a_method_params.maximal_psi_floor, 1.0e-12);
+    pp.load("maximal_jacobian_cap", a_method_params.maximal_jacobian_cap, -1.0);
 }
 
 template <typename matter_t>
@@ -82,6 +93,17 @@ void CTTKHybrid<matter_t>::solve_analytic(
             Real psi_reg = multigrid_vars_box(iv, c_psi_reg);
             Real psi_bh = psi_and_Aij_functions->compute_bowenyork_psi(loc);
             Real psi_0 = psi_reg + psi_bh;
+            if (m_method_params.maximal_slicing)
+            {
+                const Real floor =
+                    (m_method_params.maximal_psi_floor > 0.0)
+                        ? m_method_params.maximal_psi_floor
+                        : 1.0e-12;
+                if (!std::isfinite(psi_0) || psi_0 < floor)
+                {
+                    psi_0 = floor;
+                }
+            }
             Real laplacian_psi_reg;
             derivs.scalar_Laplacian(laplacian_psi_reg, iv, multigrid_vars_box,
                                     c_psi_reg);
@@ -176,6 +198,17 @@ void CTTKHybrid<matter_t>::set_elliptic_terms(
             Real psi_reg = multigrid_vars_box(iv, c_psi_reg);
             Real psi_bh = psi_and_Aij_functions->compute_bowenyork_psi(loc);
             Real psi_0 = psi_reg + psi_bh;
+            if (m_method_params.maximal_slicing)
+            {
+                const Real floor =
+                    (m_method_params.maximal_psi_floor > 0.0)
+                        ? m_method_params.maximal_psi_floor
+                        : 1.0e-12;
+                if (!std::isfinite(psi_0) || psi_0 < floor)
+                {
+                    psi_0 = floor;
+                }
+            }
             Real laplacian_psi_reg;
             derivs.scalar_Laplacian(laplacian_psi_reg, iv, multigrid_vars_box,
                                     c_psi_reg);
@@ -278,9 +311,26 @@ void CTTKHybrid<matter_t>::set_elliptic_terms(
             if (m_method_params.maximal_slicing)
             {
                 // g'(psi) = 10 pi G rho psi^4 - 0.875 A^2 psi^-8
-                aCoef_box(iv, c_psi) +=
+                Real jacobian =
                     10.0 * M_PI * G_Newton * emtensor.rho * pow(psi_0, 4.0) -
                     0.875 * A2_0 * pow(psi_0, -8.0);
+                const Real cap = m_method_params.maximal_jacobian_cap;
+                if (cap > 0.0)
+                {
+                    if (jacobian > cap)
+                    {
+                        jacobian = cap;
+                    }
+                    else if (jacobian < -cap)
+                    {
+                        jacobian = -cap;
+                    }
+                }
+                if (!std::isfinite(jacobian))
+                {
+                    jacobian = 0.0;
+                }
+                aCoef_box(iv, c_psi) += jacobian;
             }
             else
             {

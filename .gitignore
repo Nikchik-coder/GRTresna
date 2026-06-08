@@ -5,3 +5,17 @@ p
 f
 *.ex
 *hdf5
+
+# Example / simulation run output
+chk*/
+plt*/
+pout/
+pout.*
+Backtrace.*
+*.log
+run.log
+*_Ham_and_Mom_errors.txt
+Ham_and_Mom_errors.txt
+_mpi_smoke_*/
+params_*_amr_test.txt
+params_multilump_test.txt

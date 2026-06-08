@@ -9,6 +9,7 @@
 #include "DerivativeOperators.hpp"
 #include "REAL.H"
 #include "TaggingCriterion.hpp"
+#include <cmath>
 
 template <typename method_t, typename matter_t>
 class RHSTagging : public TaggingCriterion
@@ -101,11 +102,15 @@ void RHSTagging<method_t, matter_t>::set_regrid_condition(
             }
             else
             {
-                // the condition is similar to the rhs but we take abs
-                // value of the contributions and add in effect of psi_0 via log
+                // Tag on source magnitude. Exotic matter has rho < 0, so using
+                // signed rho can cancel the very regions that need AMR.
+                const Real safe_psi = (std::isfinite(psi_0) && psi_0 > 1.0e-12)
+                                          ? psi_0
+                                          : 1.0e-12;
                 condition_box(iv, 0) =
-                    2.0 * M_PI * G_Newton * emtensor.rho + abs(0.125 * A2_0) +
-                    log(psi_0) + laplacian_psi_reg +
+                    2.0 * M_PI * G_Newton * abs(emtensor.rho) +
+                    abs(0.125 * A2_0) + abs(log(safe_psi)) +
+                    abs(laplacian_psi_reg) +
                     8.0 * M_PI * G_Newton *
                         (abs(emtensor.Si[0]) + abs(emtensor.Si[1]) +
                          abs(emtensor.Si[2]));

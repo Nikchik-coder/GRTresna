@@ -98,7 +98,7 @@ inline void read_lump(GRParmParse &pp, const std::string &prefix, lump_t &L)
 // effective amplitude into [0, ~0.09] so every exotic candidate stays inside
 // the convergent regime (<~6% Ham) with margin, giving the optimizer a smooth
 // gradient on exotic content. Canonical lumps are unaffected (full strength).
-inline constexpr Real EXOTIC_AMP_SCALE = 0.25;
+static constexpr Real EXOTIC_AMP_SCALE = 0.25;
 
 // Effective amplitude actually used for a lump: canonical lumps use their raw
 // search amplitude; exotic lumps are damped into the convergent regime.
