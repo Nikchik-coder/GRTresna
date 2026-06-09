@@ -22,6 +22,8 @@ struct SimulationParameters<method_t, matter_t>::BaseParams
 {
 
     int max_NL_iter;
+    Real NL_exit_tolerance;
+    Real NL_stall_tolerance;
     bool write_diagnostics;
     int diagnostic_interval;
     Real iter_tolerance;
@@ -73,6 +75,15 @@ void SimulationParameters<method_t, matter_t>::read_base_params(GRParmParse &pp)
 #endif
 
     pp.load("max_NL_iterations", base_params.max_NL_iter, 100);
+    // Adaptive early exit for the outer (nonlinear) iteration. Both default to
+    // 0 (disabled) so existing param files keep running the full
+    // max_NL_iterations. NL_exit_tolerance stops once both Ham and Mom relative
+    // errors (in %) fall below it; NL_stall_tolerance stops once the
+    // per-iteration relative improvement of both errors drops below it (i.e. the
+    // residual has hit its discretisation floor and further iterations are
+    // wasted).
+    pp.load("NL_exit_tolerance", base_params.NL_exit_tolerance, 0.0);
+    pp.load("NL_stall_tolerance", base_params.NL_stall_tolerance, 0.0);
     pp.load("write_diagnostics", base_params.write_diagnostics, true);
     pp.load("diagnostic_interval", base_params.diagnostic_interval, 10);
 

@@ -15,6 +15,9 @@
 #include "WriteFile.hpp"
 #include "WriteOutput.H"
 
+#include <cmath>
+#include <limits>
+
 template <class method_t, class matter_t>
 GRSolver<method_t, matter_t>::GRSolver(GRParmParse &a_pp)
     : pp(a_pp), params(pp), numLevels(params.grid_params.numLevels),
@@ -84,6 +87,8 @@ int GRSolver<method_t, matter_t>::run()
     grids->fill_ghosts_correct_coarse(multigrid_vars, filling_solver_vars);
 
     openFile(params.base_params.error_filename);
+    Real prev_Ham_error = std::numeric_limits<Real>::max();
+    Real prev_Mom_error = std::numeric_limits<Real>::max();
     for (int NL_iter = 0; NL_iter < params.base_params.max_NL_iter; NL_iter++)
     {
         pout() << "Main Loop Iteration " << (NL_iter + 1) << " out of "
@@ -107,6 +112,38 @@ int GRSolver<method_t, matter_t>::run()
         }
 
         calculate_diagnostics(NL_iter);
+
+        // Adaptive early exit: the diagnostics above reflect the latest solved
+        // state, so we can skip the remaining (and now wasteful) linear solve
+        // once the constraints are converged or the residual has stalled at its
+        // floor. Both checks are off by default (tolerances <= 0).
+        {
+            const Real exit_tol = params.base_params.NL_exit_tolerance;
+            const Real stall_tol = params.base_params.NL_stall_tolerance;
+            const bool converged = (exit_tol > 0.) && (Ham_error < exit_tol) &&
+                                   (Mom_error < exit_tol);
+            bool stalled = false;
+            if (stall_tol > 0. && NL_iter >= 1)
+            {
+                const Real ham_impr =
+                    (prev_Ham_error - Ham_error) /
+                    std::max(std::abs(prev_Ham_error), 1e-300);
+                const Real mom_impr =
+                    (prev_Mom_error - Mom_error) /
+                    std::max(std::abs(prev_Mom_error), 1e-300);
+                stalled = (ham_impr < stall_tol) && (mom_impr < stall_tol);
+            }
+            prev_Ham_error = Ham_error;
+            prev_Mom_error = Mom_error;
+            if (converged || stalled)
+            {
+                pout() << "Early exit at NL iteration " << (NL_iter + 1)
+                       << (converged ? " (converged)" : " (stalled)")
+                       << ": Ham = " << Ham_error << " % Mom = " << Mom_error
+                       << " %" << endl;
+                break;
+            }
+        }
 
         grids->define_operator(mlOp, aCoef, bCoef, params.base_params.alpha,
                                params.base_params.beta);
