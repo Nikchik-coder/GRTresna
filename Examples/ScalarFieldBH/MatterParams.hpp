@@ -36,6 +36,7 @@ struct lump_t
     // sources genuinely negative energy (NEC violation). Treated as an
     // independent field, so a config can mix normal and exotic lumps.
     int exotic                 = 0;
+    int profile = 0;           // 0 = Gaussian envelope, 1 = smoothed top-hat "ball"
 };
 
 struct params_t
@@ -48,6 +49,7 @@ struct params_t
     Real dpi;
     Real dpi_length;
     Real scalar_mass;
+    Real scalar_lambda = 0.0;
 
     // Momentum-carrying scalar basis. Empty => pure legacy spherical data.
     std::vector<lump_t> lumps;
@@ -60,6 +62,7 @@ inline void read_lump(GRParmParse &pp, const std::string &prefix, lump_t &L)
     pp.load((prefix + "omega").c_str(), L.omega, 0.0);
     pp.load((prefix + "mode").c_str(), L.mode, 0);
     pp.load((prefix + "exotic").c_str(), L.exotic, 0);
+    pp.load((prefix + "profile").c_str(), L.profile, 0);
     if (pp.contains((prefix + "center").c_str()))
         pp.load((prefix + "center").c_str(), L.center);
     else
@@ -136,7 +139,20 @@ inline Real lump_phi(const RealVect &loc, const lump_t &L)
     const Real dz  = loc[2] - L.center[2];
     const Real r2  = dx * dx + dy * dy + dz * dz;
     const Real w   = L.width;
-    const Real env = exp(-r2 / (2.0 * w * w));
+    Real env;
+    if (L.profile == 1)
+    {
+        // Smoothed top-hat "ball": near-uniform density inside r <~ w with a
+        // smooth tanh edge of scale 0.25*w. A fatter, more volumetric matter
+        // distribution than the peaked Gaussian (profile 0).
+        const Real r    = sqrt(r2);
+        const Real soft = 0.25 * w;
+        env             = 0.5 * (1.0 - tanh((r - w) / soft));
+    }
+    else
+    {
+        env = exp(-r2 / (2.0 * w * w)); // Gaussian (default)
+    }
     return effective_amp(L) * angular_factor(L.mode, dx, dy, w) * env;
 }
 
@@ -197,6 +213,7 @@ inline void read_params(GRParmParse &pp, params_t &matter_params)
     pp.get("dpi", matter_params.dpi);
     pp.get("dpi_length", matter_params.dpi_length);
     pp.get("scalar_mass", matter_params.scalar_mass);
+    pp.load("scalar_lambda", matter_params.scalar_lambda, 0.0);
 
     matter_params.lumps.clear();
 

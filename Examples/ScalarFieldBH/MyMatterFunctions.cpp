@@ -13,7 +13,10 @@
 
 Real ScalarField::my_potential_function(const Real &phi_here) const
 {
-    return 0.5 * pow(m_matter_params.scalar_mass * phi_here, 2.0);
+    const Real mphi = m_matter_params.scalar_mass * phi_here;
+    const Real phi4 = pow(phi_here, 4.0);
+    return 0.5 * mphi * mphi -
+           0.25 * m_matter_params.scalar_lambda * phi4;
 }
 
 Real ScalarField::my_phi_function(const RealVect &loc) const
