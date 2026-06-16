@@ -3,6 +3,11 @@
  * Please refer to LICENSE in GRTresna's root directory.
  */
 
+// The boson-star example selects the complex matter model and provides its own
+// MatterParams/MultigridVariables, so the canonical real ScalarField source is
+// compiled out of that build to avoid duplicate/incompatible symbols.
+#ifndef USE_COMPLEX_SCALAR_MATTER
+
 #include "ScalarField.hpp"
 #include "DerivativeOperators.hpp"
 #include "EMTensor.hpp"
@@ -121,3 +126,5 @@ emtensor_t ScalarField::compute_emtensor(const IntVect a_iv,
 
     return out;
 }
+
+#endif /* USE_COMPLEX_SCALAR_MATTER */

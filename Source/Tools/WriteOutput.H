@@ -339,8 +339,15 @@ void set_output_data(LevelData<FArrayBox> &a_grchombo_vars,
 
             // Copy phi and Aij across - note this is now \tilde Aij not
             // \bar Aij
+#ifdef USE_COMPLEX_SCALAR_MATTER
+            grchombo_vars_box(iv, c_phi) = multigrid_vars_box(iv, c_phi_re);
+            grchombo_vars_box(iv, c_Pi) = multigrid_vars_box(iv, c_Pi_re);
+            grchombo_vars_box(iv, c_phi2) = multigrid_vars_box(iv, c_phi_im);
+            grchombo_vars_box(iv, c_Pi2) = multigrid_vars_box(iv, c_Pi_im);
+#else
             grchombo_vars_box(iv, c_phi) = multigrid_vars_box(iv, c_phi_0);
             grchombo_vars_box(iv, c_Pi) = multigrid_vars_box(iv, c_Pi_0);
+#endif
 
             grchombo_vars_box(iv, c_K) = multigrid_vars_box(iv, c_K_0);
             grchombo_vars_box(iv, c_A11) =

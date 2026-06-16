@@ -49,6 +49,11 @@ enum
     c_phi, // matter field added
     c_Pi,  //(minus) conjugate momentum
 
+#ifdef USE_COMPLEX_SCALAR_MATTER
+    c_phi2, // imaginary part of complex scalar
+    c_Pi2,  // (minus) conjugate momentum of imaginary part
+#endif
+
     NUM_GRCHOMBO_VARS
 };
 
@@ -73,12 +78,20 @@ static constexpr char const *variable_names[NUM_GRCHOMBO_VARS] = {
 
     "B1",     "B2",     "B3",
 
-    "phi",    "Pi"};
+    "phi",    "Pi"
+#ifdef USE_COMPLEX_SCALAR_MATTER
+    ,         "phi2",   "Pi2"
+#endif
+};
 
 static constexpr std::array<int, NUM_GRCHOMBO_VARS> const vars_parity = {
     EVEN,   EVEN,   ODD_XY, ODD_XZ, EVEN,  ODD_YZ, EVEN,  EVEN,  EVEN,
     ODD_XY, ODD_XZ, EVEN,   ODD_YZ, EVEN,  EVEN,   ODD_X, ODD_Y, ODD_Z,
-    EVEN,   ODD_X,  ODD_Y,  ODD_Z,  ODD_X, ODD_Y,  ODD_Z, EVEN,  EVEN};
+    EVEN,   ODD_X,  ODD_Y,  ODD_Z,  ODD_X, ODD_Y,  ODD_Z, EVEN,  EVEN
+#ifdef USE_COMPLEX_SCALAR_MATTER
+    ,       EVEN,   EVEN
+#endif
+};
 
 } // namespace GRChomboVariables
 
