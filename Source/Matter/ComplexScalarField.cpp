@@ -16,15 +16,25 @@ Real potential_value(Real mod2, Real mass, Real lam)
     const Real mphi = mass * std::sqrt(mod2);
     return 0.5 * mphi * mphi - 0.25 * lam * mod2 * mod2;
 }
+
+void paint_boson_fields(const BosonStarParams::params_t &params,
+                        const RealVect &loc, Real &phi1, Real &phi2,
+                        Real &pi1, Real &pi2)
+{
+    phi1 = BosonStarParams::total_phi1(loc, params);
+    phi2 = 0.0;
+    pi1  = 0.0;
+    const Real omega =
+        (params.omega > 0.0) ? params.omega : params.scalar_mass;
+    // alpha = 1 during initial paint; post-solve correction in wrapper.
+    pi2 = -omega * phi1;
+}
 } // namespace
 
 void ComplexScalarField::initialise_matter_vars(
     LevelData<FArrayBox> &a_multigrid_vars, const RealVect &a_dx) const
 {
     CH_assert(a_multigrid_vars.nComp() == NUM_MULTIGRID_VARS);
-
-    const Real omega =
-        (m_params.omega > 0.0) ? m_params.omega : m_params.scalar_mass;
 
     DataIterator dit = a_multigrid_vars.dataIterator();
     for (dit.begin(); dit.ok(); ++dit)
@@ -37,17 +47,13 @@ void ComplexScalarField::initialise_matter_vars(
             RealVect loc;
             Grids::get_loc(loc, iv, a_dx, center);
 
-            const Real r = std::sqrt(loc[0] * loc[0] + loc[1] * loc[1] +
-                                     loc[2] * loc[2]);
-            const Real phi1 =
-                BosonStarParams::phi0_profile(r, m_params.phi_c,
-                                                m_params.profile_width);
+            Real phi1, phi2, pi1, pi2;
+            paint_boson_fields(m_params, loc, phi1, phi2, pi1, pi2);
 
             box(iv, c_phi_re) = phi1;
-            box(iv, c_phi_im) = 0.0;
-            box(iv, c_Pi_re)  = 0.0;
-            // alpha = 1 during initial paint; post-solve correction in wrapper.
-            box(iv, c_Pi_im)  = -omega * phi1;
+            box(iv, c_phi_im) = phi2;
+            box(iv, c_Pi_re)  = pi1;
+            box(iv, c_Pi_im)  = pi2;
         }
     }
 }
@@ -65,31 +71,12 @@ emtensor_t ComplexScalarField::compute_emtensor(
     Real psi_0   = psi_reg + psi_bh;
     const Real chi = std::pow(psi_0, -4.0);
 
-    const Real omega =
-        (m_params.omega > 0.0) ? m_params.omega : m_params.scalar_mass;
-    const Real r = std::sqrt(loc[0] * loc[0] + loc[1] * loc[1] +
-                             loc[2] * loc[2]);
+    Real phi1, phi2, pi1, pi2;
+    paint_boson_fields(m_params, loc, phi1, phi2, pi1, pi2);
 
-    const Real phi1 =
-        BosonStarParams::phi0_profile(r, m_params.phi_c, m_params.profile_width);
-    const Real phi2 = 0.0;
-    const Real pi1  = 0.0;
-    const Real pi2  = -omega * phi1;
-
-    Real dphi1[SpaceDim];
-    if (r > 1.0e-12)
-    {
-        const Real dphidr =
-            BosonStarParams::dphi0_dr(r, m_params.phi_c, m_params.profile_width);
-        for (int i = 0; i < SpaceDim; ++i)
-            dphi1[i] = dphidr * loc[i] / r;
-    }
-    else
-    {
-        for (int i = 0; i < SpaceDim; ++i)
-            dphi1[i] = 0.0;
-    }
-    Real dphi2[SpaceDim] = {0.0, 0.0, 0.0};
+    std::array<Real, 3> dphi1;
+    BosonStarParams::total_grad_phi1(loc, m_params, dphi1);
+    Real dphi2[3] = {0.0, 0.0, 0.0};
 
     Real grad1_sq = 0.0;
     Real grad2_sq = 0.0;
@@ -103,7 +90,6 @@ emtensor_t ComplexScalarField::compute_emtensor(
     const Real V    = potential_value(mod2, m_params.scalar_mass,
                                       m_params.scalar_lambda);
 
-    // Phantom sign: flip entire T_ab for sign == -1 while preserving U(1).
     const Real sign = m_params.sign;
     out.rho = sign * (0.5 * pi1 * pi1 + 0.5 * chi * grad1_sq +
                       0.5 * pi2 * pi2 + 0.5 * chi * grad2_sq + V);
