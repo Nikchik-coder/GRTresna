@@ -120,8 +120,10 @@ int GRSolver<method_t, matter_t>::run()
         {
             const Real exit_tol = params.base_params.NL_exit_tolerance;
             const Real stall_tol = params.base_params.NL_stall_tolerance;
+            const bool mom_ok =
+                !std::isfinite(Mom_error) || (Mom_error < exit_tol);
             const bool converged = (exit_tol > 0.) && (Ham_error < exit_tol) &&
-                                   (Mom_error < exit_tol);
+                                   mom_ok;
             bool stalled = false;
             if (stall_tol > 0. && NL_iter >= 1)
             {
@@ -131,7 +133,10 @@ int GRSolver<method_t, matter_t>::run()
                 const Real mom_impr =
                     (prev_Mom_error - Mom_error) /
                     std::max(std::abs(prev_Mom_error), 1e-300);
-                stalled = (ham_impr < stall_tol) && (mom_impr < stall_tol);
+                const bool mom_stalled =
+                    !std::isfinite(Mom_error) ||
+                    !std::isfinite(prev_Mom_error) || (mom_impr < stall_tol);
+                stalled = (ham_impr < stall_tol) && mom_stalled;
             }
             prev_Ham_error = Ham_error;
             prev_Mom_error = Mom_error;
@@ -175,7 +180,9 @@ int GRSolver<method_t, matter_t>::run()
            << "Mom relative error: " << Mom_error << " %" << endl;
 
     // Mayday if result not converged (> 100% error)
-    if (Ham_error > 1e2 || Mom_error > 1e2)
+    const bool mom_failed =
+        std::isfinite(Mom_error) && (Mom_error > 1e2);
+    if (Ham_error > 1e2 || mom_failed)
     {
         MayDay::Error(
             "NL iterations did not converge - may need a better initial guess");
@@ -231,8 +238,18 @@ void GRSolver<method_t, matter_t>::calculate_diagnostics(const int NL_iter)
     Real Mom_abs_norm =
         grids->compute_norm(diagnostic_vars, Interval(c_Mom_abs, c_Mom_abs));
 
-    Ham_error = 100 * Ham_norm / Ham_abs_norm;
-    Mom_error = 100 * Mom_norm / Mom_abs_norm;
+    // When the momentum constraint source vanishes (static / P_i = 0 initial
+    // data), both norms are zero and 0/0 yields NaN.  Treat that as 0% error
+    // so NL early exit can fire on Hamiltonian convergence alone.
+    const Real norm_floor = 1.e-300;
+    if (Ham_abs_norm > norm_floor)
+        Ham_error = 100. * Ham_norm / Ham_abs_norm;
+    else
+        Ham_error = (Ham_norm <= norm_floor) ? 0. : 100.;
+    if (Mom_abs_norm > norm_floor)
+        Mom_error = 100. * Mom_norm / Mom_abs_norm;
+    else
+        Mom_error = (Mom_norm <= norm_floor) ? 0. : 100.;
 
     pout() << "The relative error of Ham before step " << NL_iter << " is "
            << Ham_error << " %" << endl;

@@ -23,10 +23,10 @@ void paint_boson_fields(const BosonStarParams::params_t &params,
 {
     phi1 = BosonStarParams::total_phi1(loc, params);
     phi2 = 0.0;
-    pi1  = 0.0;
+    pi1  = BosonStarParams::total_pi1(loc, params);
     const Real omega =
         (params.omega > 0.0) ? params.omega : params.scalar_mass;
-    // alpha = 1 during initial paint; post-solve correction in wrapper.
+    // Global U(1) phase velocity on the superposed real field (alpha = 1).
     pi2 = -omega * phi1;
 }
 } // namespace
@@ -71,31 +71,82 @@ emtensor_t ComplexScalarField::compute_emtensor(
     Real psi_0   = psi_reg + psi_bh;
     const Real chi = std::pow(psi_0, -4.0);
 
-    Real phi1, phi2, pi1, pi2;
-    paint_boson_fields(m_params, loc, phi1, phi2, pi1, pi2);
+    // Independent-field matter model with PER-LUMP signs.  Each lump is a
+    // separate complex scalar Phi_k = phi1_k + i phi2_k (phi2_k = 0 initially,
+    // pi2_k = -omega phi1_k from the global U(1) phase velocity), and a lump
+    // flagged EXOTIC contributes its whole stress-energy (kinetic + gradient +
+    // potential + momentum) with a flipped sign -- a genuine ghost/phantom
+    // source of negative energy.  Cross terms between lumps are dropped, exactly
+    // as the real ScalarField does, so a config can mix normal and exotic lumps
+    // (the warp/wormhole FTL geometry needs this).
+    const Real omega =
+        (m_params.omega > 0.0) ? m_params.omega : m_params.scalar_mass;
 
-    std::array<Real, 3> dphi1;
-    BosonStarParams::total_grad_phi1(loc, m_params, dphi1);
-    Real dphi2[3] = {0.0, 0.0, 0.0};
-
-    Real grad1_sq = 0.0;
-    Real grad2_sq = 0.0;
+    Real rho_total = 0.0;
+    Tensor<1, Real, SpaceDim> Si;
     for (int i = 0; i < SpaceDim; ++i)
+        Si[i] = 0.0;
+
+    if (!m_params.lumps.empty())
     {
-        grad1_sq += dphi1[i] * dphi1[i];
-        grad2_sq += dphi2[i] * dphi2[i];
+        for (const auto &L : m_params.lumps)
+        {
+            if (L.amp == 0.0)
+                continue;
+
+            const Real sign = (L.exotic != 0) ? -1.0 : 1.0;
+
+            const Real phi1_k = BosonStarParams::lump_phi1(loc, L);
+            const Real phi2_k = 0.0;
+            const Real pi1_k  = BosonStarParams::lump_pi1(loc, L);
+            const Real pi2_k  = -omega * phi1_k;
+
+            std::array<Real, 3> dphi1_k;
+            BosonStarParams::lump_grad_phi1(loc, L, dphi1_k);
+            // phi2_k = 0 everywhere => grad phi2_k = 0.
+
+            Real grad1_sq = 0.0;
+            for (int i = 0; i < SpaceDim; ++i)
+                grad1_sq += dphi1_k[i] * dphi1_k[i];
+
+            const Real mod2_k = phi1_k * phi1_k + phi2_k * phi2_k;
+            const Real V_k    = potential_value(mod2_k, m_params.scalar_mass,
+                                                m_params.scalar_lambda);
+
+            rho_total += sign * (0.5 * pi1_k * pi1_k +
+                                 0.5 * chi * grad1_sq +
+                                 0.5 * pi2_k * pi2_k + V_k);
+            for (int i = 0; i < SpaceDim; ++i)
+                Si[i] += sign * (-pi1_k * dphi1_k[i]);
+        }
+    }
+    else
+    {
+        // Legacy single centered boson star (no lumps): use the global sign.
+        Real phi1, phi2, pi1, pi2;
+        paint_boson_fields(m_params, loc, phi1, phi2, pi1, pi2);
+
+        std::array<Real, 3> dphi1;
+        BosonStarParams::total_grad_phi1(loc, m_params, dphi1);
+
+        Real grad1_sq = 0.0;
+        for (int i = 0; i < SpaceDim; ++i)
+            grad1_sq += dphi1[i] * dphi1[i];
+
+        const Real mod2 = phi1 * phi1 + phi2 * phi2;
+        const Real V    = potential_value(mod2, m_params.scalar_mass,
+                                          m_params.scalar_lambda);
+
+        const Real sign = m_params.sign;
+        rho_total = sign * (0.5 * pi1 * pi1 + 0.5 * chi * grad1_sq +
+                            0.5 * pi2 * pi2 + V);
+        for (int i = 0; i < SpaceDim; ++i)
+            Si[i] = sign * (-pi1 * dphi1[i]);
     }
 
-    const Real mod2 = phi1 * phi1 + phi2 * phi2;
-    const Real V    = potential_value(mod2, m_params.scalar_mass,
-                                      m_params.scalar_lambda);
-
-    const Real sign = m_params.sign;
-    out.rho = sign * (0.5 * pi1 * pi1 + 0.5 * chi * grad1_sq +
-                      0.5 * pi2 * pi2 + 0.5 * chi * grad2_sq + V);
-
+    out.rho = rho_total;
     for (int i = 0; i < SpaceDim; ++i)
-        out.Si[i] = sign * (-pi1 * dphi1[i] - pi2 * dphi2[i]);
+        out.Si[i] = Si[i];
 
     return out;
 }
