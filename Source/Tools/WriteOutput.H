@@ -25,6 +25,10 @@
 #include "SimulationParameters.hpp"
 #include <iostream>
 
+#ifdef USE_COMPLEX_SCALAR_MATTER
+#include "BosonStarParams.hpp"
+#endif
+
 #ifdef CH_Linux
 // Should be undefined by default
 // #define TRAP_FPE
@@ -344,6 +348,12 @@ void set_output_data(LevelData<FArrayBox> &a_grchombo_vars,
             grchombo_vars_box(iv, c_Pi) = multigrid_vars_box(iv, c_Pi_re);
             grchombo_vars_box(iv, c_phi2) = multigrid_vars_box(iv, c_phi_im);
             grchombo_vars_box(iv, c_Pi2) = multigrid_vars_box(iv, c_Pi_im);
+            // Overwrite the flat lapse (set to 1 above) with the stationary
+            // boson-star lapse alpha(r) so the evolution starts in the star's
+            // own gauge (alpha(0) ~ 0.45 << 1) instead of ringing down from 1.
+            // Reduces to 1 for a flat-space Q-ball table (no lapse column).
+            grchombo_vars_box(iv, c_lapse) =
+                BosonStarParams::total_alpha(loc, a_params.matter_params);
 #else
             grchombo_vars_box(iv, c_phi) = multigrid_vars_box(iv, c_phi_0);
             grchombo_vars_box(iv, c_Pi) = multigrid_vars_box(iv, c_Pi_0);

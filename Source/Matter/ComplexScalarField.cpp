@@ -11,10 +11,17 @@
 
 namespace
 {
-Real potential_value(Real mod2, Real mass, Real lam)
+// V = 1/2 m^2 |Phi|^2 - 1/4 lambda |Phi|^4 + 1/6 mu |Phi|^6.  The sextic
+// stabiliser (mu > 0) is REQUIRED for a genuine 3D Q-ball: a pure attractive
+// quartic is the critical case and either collapses or disperses.  Must match
+// GRTeclyn's ComplexScalarPotential.hpp so the constraint solve and the
+// evolution share the same T_ab (otherwise the solved metric backs a different
+// soliton than the one that is evolved, and the lump relaxes/disperses at t=0).
+Real potential_value(Real mod2, Real mass, Real lam, Real mu)
 {
     const Real mphi = mass * std::sqrt(mod2);
-    return 0.5 * mphi * mphi - 0.25 * lam * mod2 * mod2;
+    return 0.5 * mphi * mphi - 0.25 * lam * mod2 * mod2 +
+           (1.0 / 6.0) * mu * mod2 * mod2 * mod2;
 }
 
 void paint_boson_fields(const BosonStarParams::params_t &params,
@@ -26,8 +33,11 @@ void paint_boson_fields(const BosonStarParams::params_t &params,
     pi1  = BosonStarParams::total_pi1(loc, params);
     const Real omega =
         (params.omega > 0.0) ? params.omega : params.scalar_mass;
-    // Global U(1) phase velocity on the superposed real field (alpha = 1).
-    pi2 = -omega * phi1;
+    // Global U(1) phase velocity: Pi_im = -(omega/alpha(r)) phi1.  For a
+    // self-gravitating star alpha(r) < 1 in the core, so this is the correct
+    // stationary momentum; for a flat-space table alpha == 1 and it reduces to
+    // the old -omega*phi1.
+    pi2 = BosonStarParams::total_pi2(loc, params, omega);
 }
 } // namespace
 
@@ -99,7 +109,10 @@ emtensor_t ComplexScalarField::compute_emtensor(
             const Real phi1_k = BosonStarParams::lump_phi1(loc, L);
             const Real phi2_k = 0.0;
             const Real pi1_k  = BosonStarParams::lump_pi1(loc, L);
-            const Real pi2_k  = -omega * phi1_k;
+            // Stationary U(1) momentum uses the star's own lapse alpha(r):
+            // Pi_im = -(omega/alpha) phi1 (alpha == 1 for a flat-space table).
+            const Real alpha_k = BosonStarParams::lump_alpha(loc, L);
+            const Real pi2_k   = -(omega / alpha_k) * phi1_k;
 
             std::array<Real, 3> dphi1_k;
             BosonStarParams::lump_grad_phi1(loc, L, dphi1_k);
@@ -111,7 +124,8 @@ emtensor_t ComplexScalarField::compute_emtensor(
 
             const Real mod2_k = phi1_k * phi1_k + phi2_k * phi2_k;
             const Real V_k    = potential_value(mod2_k, m_params.scalar_mass,
-                                                m_params.scalar_lambda);
+                                                m_params.scalar_lambda,
+                                                m_params.scalar_mu);
 
             rho_total += sign * (0.5 * pi1_k * pi1_k +
                                  0.5 * chi * grad1_sq +
@@ -135,7 +149,8 @@ emtensor_t ComplexScalarField::compute_emtensor(
 
         const Real mod2 = phi1 * phi1 + phi2 * phi2;
         const Real V    = potential_value(mod2, m_params.scalar_mass,
-                                          m_params.scalar_lambda);
+                                          m_params.scalar_lambda,
+                                          m_params.scalar_mu);
 
         const Real sign = m_params.sign;
         rho_total = sign * (0.5 * pi1 * pi1 + 0.5 * chi * grad1_sq +
