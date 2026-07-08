@@ -1,0 +1,67 @@
+# Rotating-wormhole constraint-clean ID test (B1/B2 validation).
+# Single EXOTIC (phantom) WINDING complex-scalar lump on a bare-mass throat:
+#   Phi = f(r,theta) e^{i(m phi_az)},  f = amp * env(r) * (sin theta)^m
+# The phase winding sources a real azimuthal momentum density, so the momentum
+# constraint solve should produce a nonzero, converged frame-dragging Vi/Aij
+# (clean J_z) rather than the four-lobe dispersal of the real-modulation path.
+
+output_path = Outputs_rotwh6/
+output_filename = InitialDataFinal.3d.hdf5
+error_filename = Ham_and_Mom_errors
+write_diagnostics = 0
+
+N = 64 64 64
+L = 64
+max_level = 0
+refine_threshold = 0.5
+block_factor = 16
+max_grid_size = 32
+regrid_radius = 10
+coefficient_average_type = arithmetic
+
+is_periodic = 0 0 0
+use_compact_Vi_ansatz = 1
+hi_boundary = 0 0 0
+lo_boundary = 0 0 0
+
+G_Newton = 1.0
+scalar_mass = 0.1
+scalar_lambda = 0.0
+scalar_mu = 0.0
+bs_phi_c = 0.05
+bs_profile_width = 8.0
+bs_omega = 0.0
+
+# One exotic, phase-winding lump (the rotating phantom throat support).
+num_lumps = 1
+lump0_amp = 0.02
+lump0_width = 6.0
+lump0_center = 0.0 0.0 0.0
+lump0_velocity = 0.0 0.0 0.0
+lump0_omega = 0.05
+lump0_mode = 1
+lump0_exotic = 0
+lump0_winding = 0
+lump0_profile = 0
+
+# Ellis-Bronnikov-like throat: singular psi ~ (b0/2)/r with b0 = 0.5.
+regularised_part_psi = 1.0
+sign_of_K = 1
+maximal_slicing = 0
+psi_floor = 0.1
+maximal_jacobian_cap = 25.0
+psi_relaxation = 0.6
+
+bh1_bare_mass = 0.0
+bh1_spin = 0.0 0.0 0.0
+bh1_momentum = 0.0 0.0 0.0
+bh1_offset = 0.0 0.0 0.0
+bh2_bare_mass = 0.0
+bh2_spin = 0.0 0.0 0.0
+bh2_momentum = 0.0 0.0 0.0
+bh2_offset = 0.0 0.0 0.0
+
+max_NL_iterations = 50
+NL_exit_tolerance = 1.0
+NL_stall_tolerance = 0.02
+deactivate_zero_mode = 0

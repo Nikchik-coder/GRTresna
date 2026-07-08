@@ -1,0 +1,63 @@
+# AMR smoke test: one isolated exotic scalar lump on the maximal-slicing path.
+# This should remain finite on AMR and gives a direct regression for rho < 0.
+output_path = OutputsExoticAMRTest/
+output_filename = ExoticAMRTest.3d.hdf5
+error_filename = ExoticAMRTest_Ham_and_Mom_errors
+
+N = 64 64 64
+L = 128
+max_level = 0
+refine_threshold = 0.35
+regrid_radius = 0
+block_factor = 16
+max_grid_size = 16
+coefficient_average_type = arithmetic
+
+is_periodic = 0 0 0
+use_compact_Vi_ansatz = 1
+hi_boundary = 0 0 0
+lo_boundary = 0 0 1
+
+G_Newton = 1.0
+
+# Lump basis only; no canonical background contamination.
+phi_0 = 0.0
+dphi = 0.0
+dphi_length = 5.0
+pi_0 = 0.0
+dpi = 0.0
+dpi_length = 5.0
+scalar_mass = 1e-1
+
+num_lumps = 1
+lump0_amp = 0.08
+lump0_width = 8.0
+lump0_center = 0.0 0.0 0.0
+lump0_velocity = 0.25 0.0 0.0
+lump0_omega = 0.0
+lump0_mode = 0
+lump0_exotic = 1
+
+regularised_part_psi = 1.0
+sign_of_K = 1
+maximal_slicing = 1
+psi_relaxation = 0.6
+psi_floor = 0.1
+maximal_jacobian_cap = 25.0
+
+bh1_bare_mass = 0.0
+bh1_spin = 0.0 0.0 0.0
+bh1_momentum = 0.0 0.0 0.0
+bh1_offset = 0.0 0.0 0.0
+bh2_bare_mass = 0.0
+bh2_spin = 0.0 0.0 0.0
+bh2_momentum = 0.0 0.0 0.0
+bh2_offset = 0.0 0.0 0.0
+
+# write_diagnostics writes the full multi-level HDF5 every diagnostic_interval
+# iterations (hundreds of MB each); the Ham/Mom convergence error file is always
+# written, so keep heavy diagnostics off for the disk-safe smoke regression.
+max_NL_iterations = 50
+write_diagnostics = 0
+diagnostic_interval = 10
+deactivate_zero_mode = 0

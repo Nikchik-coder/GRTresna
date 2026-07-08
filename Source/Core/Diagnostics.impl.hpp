@@ -89,8 +89,15 @@ void Diagnostics<method_t, matter_t>::compute_constraint_terms(
                 K_0_squared - 24.0 * M_PI * G_Newton * emtensor.rho -
                 1.5 * A2_0 * pow(psi_0, -12.0) -
                 12.0 * laplacian_psi_reg * pow(psi_0, -5.0);
+            // NB: abs(rho) here.  For EXOTIC (rho < 0) matter the maximal-slice
+            // constraint drives 12 lap(psi) psi^-5 -> -24 pi G rho = +|24 pi G
+            // rho| at convergence, so a signed rho term cancels the Laplacian
+            // term and Ham_abs collapses to ~0 -- pinning Ham_norm = |Ham/Ham_abs|
+            // at ~100% no matter how well the solve converged (the spurious
+            // "exotic Ham no-op").  Taking abs(rho), like every other term and
+            // like Mom_abs, gives a strictly positive scale.
             diagnostic_vars_box(iv, c_Ham_abs) =
-                K_0_squared + 24.0 * M_PI * G_Newton * emtensor.rho +
+                K_0_squared + 24.0 * M_PI * G_Newton * abs(emtensor.rho) +
                 1.5 * abs(A2_0) * pow(psi_0, -12.0) +
                 12.0 * abs(laplacian_psi_reg) * pow(psi_0, -5.0);
 

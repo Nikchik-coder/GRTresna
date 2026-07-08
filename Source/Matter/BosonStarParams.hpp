@@ -40,6 +40,17 @@ struct boson_lump_t
     // independent field, so a config can mix normal and exotic lumps -- this is
     // what the warp/wormhole FTL geometry needs (mirrors ScalarFieldBH).
     int exotic                   = 0;
+    // Phase-winding flag for a rotating (Kleihaus-Kunz / Teo-class) wormhole.
+    // 0 => legacy boson-star ansatz (phi2 = 0, real angular_factor modulation of
+    // phi1, U(1) phase only in Pi_im).  != 0 => genuine phase winding
+    //   Phi = f(r,theta) e^{i(m phi_az)},  f = amp * env(r) * (sin theta)^m,
+    //   phi1 = f cos(m phi_az),  phi2 = f sin(m phi_az),
+    //   Pi1 = (omega/alpha) phi2,  Pi2 = -(omega/alpha) phi1
+    // (the e^{-i omega t} stationary rotation, matching the GRTeclyn complex_scalar
+    // evolution convention).  ``mode`` is reused as the azimuthal winding number m.
+    // This is what makes |Phi|^2 axisymmetric (no four-lobe dispersal, lesson L3)
+    // and lets the two-channel momentum density source a clean J_z.
+    int winding                  = 0;
 };
 
 struct params_t
@@ -319,6 +330,83 @@ inline Real lump_pi1(const RealVect &loc, const boson_lump_t &L)
     return boost + rot;
 }
 
+// ---------------------------------------------------------------------------
+// Phase-winding (rotating wormhole) ansatz helpers.  Active per-lump when
+// ``L.winding != 0``; ``L.mode`` is the azimuthal winding number m.
+// ---------------------------------------------------------------------------
+
+// (sin theta)^m polar factor, sin theta = sqrt(dx^2+dy^2)/r.  Regular on the
+// z-axis (returns 0 for m>=1 there, so the toroidal field vanishes smoothly).
+inline Real polar_factor(int m, Real dx, Real dy, Real dz)
+{
+    if (m <= 0)
+        return 1.0;
+    const Real rho2 = dx * dx + dy * dy;
+    const Real r    = std::sqrt(rho2 + dz * dz);
+    if (r <= 1.0e-12)
+        return 0.0;
+    const Real sinth = std::sqrt(rho2) / r;
+    Real f           = 1.0;
+    for (int k = 0; k < m; ++k)
+        f *= sinth;
+    return f;
+}
+
+// Axisymmetric modulus f(r,theta) = amp * env(r) * (sin theta)^m.
+inline Real lump_winding_modulus(const RealVect &loc, const boson_lump_t &L)
+{
+    if (L.amp == 0.0)
+        return 0.0;
+    const Real dx = loc[0] - L.center[0];
+    const Real dy = loc[1] - L.center[1];
+    const Real dz = loc[2] - L.center[2];
+    const Real r2 = dx * dx + dy * dy + dz * dz;
+    const Real r  = std::sqrt(r2);
+    const Real w  = L.width;
+    const Real env =
+        (L.profile == 3) ? qball_envelope(r, L) : lump_envelope(r2, r, w, L.profile);
+    return L.amp * env * polar_factor(L.mode, dx, dy, dz);
+}
+
+// phi1 = f cos(m phi_az), phi2 = f sin(m phi_az).
+inline void lump_phi_winding(const RealVect &loc, const boson_lump_t &L,
+                             Real &phi1, Real &phi2)
+{
+    const Real f  = lump_winding_modulus(loc, L);
+    const Real dx = loc[0] - L.center[0];
+    const Real dy = loc[1] - L.center[1];
+    const Real az = std::atan2(dy, dx);
+    const Real m  = static_cast<Real>(L.mode);
+    phi1          = f * std::cos(m * az);
+    phi2          = f * std::sin(m * az);
+}
+
+// Finite-difference gradients of the winding fields phi1, phi2.
+inline void lump_grad_phi_winding(const RealVect &loc, const boson_lump_t &L,
+                                  std::array<Real, 3> &g1,
+                                  std::array<Real, 3> &g2)
+{
+    if (L.amp == 0.0)
+    {
+        g1 = {0.0, 0.0, 0.0};
+        g2 = {0.0, 0.0, 0.0};
+        return;
+    }
+    const Real eps = 1.0e-3 * L.width;
+    for (int i = 0; i < 3; ++i)
+    {
+        RealVect lp = loc;
+        RealVect lm = loc;
+        lp[i] += eps;
+        lm[i] -= eps;
+        Real p1p, p2p, p1m, p2m;
+        lump_phi_winding(lp, L, p1p, p2p);
+        lump_phi_winding(lm, L, p1m, p2m);
+        g1[i] = (p1p - p1m) / (2.0 * eps);
+        g2[i] = (p2p - p2m) / (2.0 * eps);
+    }
+}
+
 inline Real total_phi1(const RealVect &loc, const params_t &p)
 {
     if (!p.lumps.empty())
@@ -417,6 +505,7 @@ inline void read_boson_lump(GRParmParse &pp, const std::string &prefix,
     pp.load((prefix + "mode").c_str(), L.mode, 0);
     pp.load((prefix + "profile").c_str(), L.profile, 0);
     pp.load((prefix + "exotic").c_str(), L.exotic, 0);
+    pp.load((prefix + "winding").c_str(), L.winding, 0);
     // Optional per-lump tabulated-profile path (profile == 3).  Usually left
     // unset and inherited from the global ``qball_profile_path`` in read_params.
     pp.load((prefix + "profile_path").c_str(), L.profile_path, std::string(""));

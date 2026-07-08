@@ -162,6 +162,44 @@ int GRSolver<method_t, matter_t>::run()
                            params.base_params.psi_relaxation,
                            params.base_params.psi_floor);
 
+        // Instrumentation: confirm the elliptic psi-solve is actually moving
+        // psi (the exotic "Ham no-op" was a diagnostic denominator artefact,
+        // NOT a stalled solve -- this makes that positively visible).  Per-rank
+        // (pout) max |dpsi| correction and the psi_reg range after the update.
+        {
+            Real max_dpsi = 0.0;
+            Real min_psi_reg = std::numeric_limits<Real>::max();
+            Real max_psi_reg = -std::numeric_limits<Real>::max();
+            for (int ilev = 0; ilev < numLevels; ilev++)
+            {
+                DataIterator dit = multigrid_vars[ilev]->dataIterator();
+                for (dit.begin(); dit.ok(); ++dit)
+                {
+                    FArrayBox &mg_box = (*multigrid_vars[ilev])[dit()];
+                    FArrayBox &con_box = (*constraint_vars[ilev])[dit()];
+                    Box valid = grids->grids_data[ilev][dit()];
+                    BoxIterator bit(valid);
+                    for (bit.begin(); bit.ok(); ++bit)
+                    {
+                        IntVect iv = bit();
+                        const Real dpsi =
+                            std::abs(params.base_params.psi_relaxation *
+                                     con_box(iv, c_psi));
+                        if (dpsi > max_dpsi)
+                            max_dpsi = dpsi;
+                        const Real pr = mg_box(iv, c_psi_reg);
+                        if (pr < min_psi_reg)
+                            min_psi_reg = pr;
+                        if (pr > max_psi_reg)
+                            max_psi_reg = pr;
+                    }
+                }
+            }
+            pout() << "  psi solve: max|dpsi| = " << max_dpsi
+                   << ", psi_reg in [" << min_psi_reg << ", " << max_psi_reg
+                   << "]" << endl;
+        }
+
         bool filling_solver_vars = true;
         grids->fill_ghosts_correct_coarse(multigrid_vars, filling_solver_vars);
 

@@ -57,8 +57,46 @@ void ComplexScalarField::initialise_matter_vars(
             RealVect loc;
             Grids::get_loc(loc, iv, a_dx, center);
 
-            Real phi1, phi2, pi1, pi2;
-            paint_boson_fields(m_params, loc, phi1, phi2, pi1, pi2);
+            Real phi1 = 0.0, phi2 = 0.0, pi1 = 0.0, pi2 = 0.0;
+            if (!m_params.lumps.empty())
+            {
+                // Per-lump painting so winding (rotating) lumps get a genuine
+                // phi2 = f sin(m phi_az) and the correct two-channel U(1)
+                // momentum; non-winding lumps keep the legacy boson-star ansatz.
+                const Real omega = (m_params.omega > 0.0) ? m_params.omega
+                                                          : m_params.scalar_mass;
+                for (const auto &L : m_params.lumps)
+                {
+                    if (L.amp == 0.0)
+                        continue;
+                    const Real alpha_k = BosonStarParams::lump_alpha(loc, L);
+                    if (L.winding != 0)
+                    {
+                        Real f1, f2;
+                        BosonStarParams::lump_phi_winding(loc, L, f1, f2);
+                        phi1 += f1;
+                        phi2 += f2;
+                        // Per-lump phase velocity (the wormhole rotation rate);
+                        // fall back to the global omega only if unset.
+                        const Real omega_k = (L.omega != 0.0) ? L.omega : omega;
+                        // Pi = d_t Phi / alpha with Phi ~ e^{-i omega t}:
+                        //   Pi1 = +(omega/alpha) phi2,  Pi2 = -(omega/alpha) phi1.
+                        pi1 += (omega_k / alpha_k) * f2;
+                        pi2 += -(omega_k / alpha_k) * f1;
+                    }
+                    else
+                    {
+                        const Real f = BosonStarParams::lump_phi1(loc, L);
+                        phi1 += f;
+                        pi1 += BosonStarParams::lump_pi1(loc, L);
+                        pi2 += -(omega / alpha_k) * f;
+                    }
+                }
+            }
+            else
+            {
+                paint_boson_fields(m_params, loc, phi1, phi2, pi1, pi2);
+            }
 
             box(iv, c_phi_re) = phi1;
             box(iv, c_phi_im) = phi2;
@@ -105,33 +143,50 @@ emtensor_t ComplexScalarField::compute_emtensor(
                 continue;
 
             const Real sign = (L.exotic != 0) ? -1.0 : 1.0;
-
-            const Real phi1_k = BosonStarParams::lump_phi1(loc, L);
-            const Real phi2_k = 0.0;
-            const Real pi1_k  = BosonStarParams::lump_pi1(loc, L);
-            // Stationary U(1) momentum uses the star's own lapse alpha(r):
-            // Pi_im = -(omega/alpha) phi1 (alpha == 1 for a flat-space table).
             const Real alpha_k = BosonStarParams::lump_alpha(loc, L);
-            const Real pi2_k   = -(omega / alpha_k) * phi1_k;
 
-            std::array<Real, 3> dphi1_k;
-            BosonStarParams::lump_grad_phi1(loc, L, dphi1_k);
-            // phi2_k = 0 everywhere => grad phi2_k = 0.
+            Real phi1_k, phi2_k, pi1_k, pi2_k;
+            std::array<Real, 3> dphi1_k, dphi2_k;
+            if (L.winding != 0)
+            {
+                // Genuine phase winding Phi = f e^{i(m phi_az)}: axisymmetric
+                // |Phi|^2, and a real azimuthal momentum density that sources a
+                // clean J_z via the momentum constraint (constraint-clean spin).
+                BosonStarParams::lump_phi_winding(loc, L, phi1_k, phi2_k);
+                const Real omega_k = (L.omega != 0.0) ? L.omega : omega;
+                pi1_k = (omega_k / alpha_k) * phi2_k;
+                pi2_k = -(omega_k / alpha_k) * phi1_k;
+                BosonStarParams::lump_grad_phi_winding(loc, L, dphi1_k, dphi2_k);
+            }
+            else
+            {
+                phi1_k = BosonStarParams::lump_phi1(loc, L);
+                phi2_k = 0.0;
+                pi1_k  = BosonStarParams::lump_pi1(loc, L);
+                // Stationary U(1) momentum uses the star's own lapse alpha(r):
+                // Pi_im = -(omega/alpha) phi1 (alpha == 1 for a flat-space table).
+                pi2_k = -(omega / alpha_k) * phi1_k;
+                BosonStarParams::lump_grad_phi1(loc, L, dphi1_k);
+                dphi2_k = {0.0, 0.0, 0.0}; // phi2_k = 0 => grad phi2_k = 0
+            }
 
-            Real grad1_sq = 0.0;
+            Real grad1_sq = 0.0, grad2_sq = 0.0;
             for (int i = 0; i < SpaceDim; ++i)
+            {
                 grad1_sq += dphi1_k[i] * dphi1_k[i];
+                grad2_sq += dphi2_k[i] * dphi2_k[i];
+            }
 
             const Real mod2_k = phi1_k * phi1_k + phi2_k * phi2_k;
             const Real V_k    = potential_value(mod2_k, m_params.scalar_mass,
                                                 m_params.scalar_lambda,
                                                 m_params.scalar_mu);
 
-            rho_total += sign * (0.5 * pi1_k * pi1_k +
-                                 0.5 * chi * grad1_sq +
-                                 0.5 * pi2_k * pi2_k + V_k);
+            rho_total += sign * (0.5 * pi1_k * pi1_k + 0.5 * pi2_k * pi2_k +
+                                 0.5 * chi * (grad1_sq + grad2_sq) + V_k);
+            // Two-channel momentum density S_i = -(Pi1 d_i phi1 + Pi2 d_i phi2).
             for (int i = 0; i < SpaceDim; ++i)
-                Si[i] += sign * (-pi1_k * dphi1_k[i]);
+                Si[i] += sign * (-(pi1_k * dphi1_k[i] + pi2_k * dphi2_k[i]));
         }
     }
     else
