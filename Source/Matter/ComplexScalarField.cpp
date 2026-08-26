@@ -89,7 +89,11 @@ void ComplexScalarField::initialise_matter_vars(
                         const Real f = BosonStarParams::lump_phi1(loc, L);
                         phi1 += f;
                         pi1 += BosonStarParams::lump_pi1(loc, L);
-                        pi2 += -(omega / alpha_k) * f;
+                        // Per-lump U(1) phase velocity (mixed-frequency
+                        // selfgrav pairs); global bs_omega when unset.
+                        const Real omega_k =
+                            (L.bs_omega > 0.0) ? L.bs_omega : omega;
+                        pi2 += -(omega_k / alpha_k) * f;
                     }
                 }
             }
@@ -163,9 +167,11 @@ emtensor_t ComplexScalarField::compute_emtensor(
                 phi1_k = BosonStarParams::lump_phi1(loc, L);
                 phi2_k = 0.0;
                 pi1_k  = BosonStarParams::lump_pi1(loc, L);
-                // Stationary U(1) momentum uses the star's own lapse alpha(r):
-                // Pi_im = -(omega/alpha) phi1 (alpha == 1 for a flat-space table).
-                pi2_k = -(omega / alpha_k) * phi1_k;
+                // Stationary U(1) momentum uses the star's own lapse alpha(r)
+                // and its own phase velocity (per-lump bs_omega for mixed-
+                // frequency pairs; alpha == 1 for a flat-space table).
+                const Real omega_k = (L.bs_omega > 0.0) ? L.bs_omega : omega;
+                pi2_k = -(omega_k / alpha_k) * phi1_k;
                 BosonStarParams::lump_grad_phi1(loc, L, dphi1_k);
                 dphi2_k = {0.0, 0.0, 0.0}; // phi2_k = 0 => grad phi2_k = 0
             }
