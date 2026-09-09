@@ -79,9 +79,13 @@ emtensor_t ScalarField::compute_emtensor(const IntVect a_iv,
     Tensor<1, Real, SpaceDim> Si;
     FOR1(i) { Si[i] = 0.0; }
 
-    // --- Background (always canonical): spherical phi_0 + dphi e^{-r/L} cloud,
-    //     carrying no net momentum.
+    // --- Background: spherical phi_0 + dphi e^{-r/L} cloud, carrying no net
+    //     momentum.  Canonical unless background_exotic != 0, in which case
+    //     it is a phantom field and its kinetic energy and momentum density
+    //     enter with a flipped sign (the same rule as an exotic lump).
     {
+        const Real bg_sign =
+            (m_matter_params.background_exotic != 0) ? -1.0 : 1.0;
         Real rr = sqrt(loc[0] * loc[0] + loc[1] * loc[1] + loc[2] * loc[2]);
         Real env = m_matter_params.dphi *
                    exp(-rr / m_matter_params.dphi_length);
@@ -98,8 +102,9 @@ emtensor_t ScalarField::compute_emtensor(const IntVect a_iv,
             d1_bg[i] = radial * loc[i];
             d1_bg_squared += d1_bg[i] * d1_bg[i];
         }
-        rho_kinetic += 0.5 * chi * d1_bg_squared + 0.5 * Pi_bg * Pi_bg;
-        FOR1(i) { Si[i] += -Pi_bg * d1_bg[i]; }
+        rho_kinetic +=
+            bg_sign * (0.5 * chi * d1_bg_squared + 0.5 * Pi_bg * Pi_bg);
+        FOR1(i) { Si[i] += bg_sign * (-Pi_bg * d1_bg[i]); }
     }
 
     // --- Lumps (each canonical or exotic).

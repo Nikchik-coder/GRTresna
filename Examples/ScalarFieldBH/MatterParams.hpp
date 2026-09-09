@@ -9,6 +9,7 @@
 #include "GRParmParse.hpp"
 #include "REAL.H"
 #include "RealVect.H"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <string>
@@ -36,7 +37,20 @@ struct lump_t
     // sources genuinely negative energy (NEC violation). Treated as an
     // independent field, so a config can mix normal and exotic lumps.
     int exotic                 = 0;
-    int profile = 0;           // 0 = Gaussian envelope, 1 = smoothed top-hat "ball"
+    // 0 = Gaussian envelope, 1 = smoothed top-hat "ball",
+    // 2 = Ellis/drainhole throat profile  phi = amp [atan(X) - pi/2],
+    //     X = (r - width^2 / 4 r) / width, i.e. `width` is the throat
+    //     parameter b and `amp` the field-equation amplitude
+    //     C = sqrt(b^2 + m^2) / (b sqrt(4 pi)) of GRTeclyn's
+    //     BinaryWormholeInitialData (1 / sqrt(4 pi) for a massless throat).
+    //     It is an EXACT solution's profile, not a search variable, so it is
+    //     painted at full strength whatever `exotic` says (see effective_amp),
+    //     and with exotic = 1 it is the phantom source a wormhole needs.  Pair
+    //     it with bh*_bare_mass = b at the same centre: sqrt(1 + b^2 / 4 r^2)
+    //     has the same b / 2r singularity as a puncture, so the regular part
+    //     of psi the solver finds is bounded.  Sign of amp = sign of the
+    //     throat's scalar (GRTeclyn's phi_sign_B).
+    int profile = 0;
 };
 
 struct params_t
@@ -53,6 +67,12 @@ struct params_t
 
     // Momentum-carrying scalar basis. Empty => pure legacy spherical data.
     std::vector<lump_t> lumps;
+
+    // Phantom sign of the legacy spherical background (phi_0 + dphi e^{-r/L},
+    // pi_0 + dpi e^{-r/L}): 0 = canonical (the archived behaviour, bit for
+    // bit); != 0 = its kinetic energy and momentum density enter the
+    // constraint solve with a flipped sign, exactly as an exotic lump does.
+    int background_exotic = 0;
 };
 
 inline void read_lump(GRParmParse &pp, const std::string &prefix, lump_t &L)
@@ -107,6 +127,10 @@ static constexpr Real EXOTIC_AMP_SCALE = 0.25;
 // search amplitude; exotic lumps are damped into the convergent regime.
 inline Real effective_amp(const lump_t &L)
 {
+    if (L.profile == 2)
+    {
+        return L.amp; // exact drainhole amplitude, never damped
+    }
     return (L.exotic != 0) ? (EXOTIC_AMP_SCALE * L.amp) : L.amp;
 }
 
@@ -139,6 +163,16 @@ inline Real lump_phi(const RealVect &loc, const lump_t &L)
     const Real dz  = loc[2] - L.center[2];
     const Real r2  = dx * dx + dy * dy + dz * dz;
     const Real w   = L.width;
+    if (L.profile == 2)
+    {
+        // Drainhole throat: atan of the proper-distance-like coordinate,
+        // shifted so phi -> 0 at infinity (and -> -pi amp at the compactified
+        // far end r -> 0).  No angular modulation: the profile is spherical
+        // about its own centre.
+        const Real r = std::max(sqrt(r2), 1.0e-12 * w);
+        const Real X = (r - w * w / (4.0 * r)) / w;
+        return effective_amp(L) * (atan(X) - 0.5 * M_PI);
+    }
     Real env;
     if (L.profile == 1)
     {
@@ -214,6 +248,7 @@ inline void read_params(GRParmParse &pp, params_t &matter_params)
     pp.get("dpi_length", matter_params.dpi_length);
     pp.get("scalar_mass", matter_params.scalar_mass);
     pp.load("scalar_lambda", matter_params.scalar_lambda, 0.0);
+    pp.load("background_exotic", matter_params.background_exotic, 0);
 
     matter_params.lumps.clear();
 
