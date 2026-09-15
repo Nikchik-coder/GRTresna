@@ -56,6 +56,11 @@ class BoundaryConditions
         std::array<int, NUM_CONSTRAINT_VARS> vars_parity_constraint;
         int extrapolation_order;
         bool Vi_extrapolated_at_boundary;
+        /// Outer condition on the solver variable psi.  false (default) pins
+        /// psi_reg = 1 on the boundary; true imposes the Robin condition
+        /// d_r(psi_reg - 1) + (psi_reg - 1)/r = 0, which admits psi_reg ->
+        /// 1 + C/r and lets the solve find C instead of being told C = 0.
+        bool psi_robin_boundary;
         params_t(); // sets the defaults
         void
         set_is_periodic(const std::array<bool, CH_SPACEDIM> &a_is_periodic);
@@ -146,6 +151,18 @@ class BoundaryConditions
                                  const Side::LoHiSide a_side, const int dir,
                                  const std::vector<int> &extrapolating_comps,
                                  const int order = 1) const;
+
+    /// Fill a boundary cell so that (value - asymptote) falls as 1/r between
+    /// the nearest interior cell and this one -- the discrete form of the
+    /// Robin condition d_r(u - a) + (u - a)/r = 0.
+    void fill_robin_cell(FArrayBox &out_box, const IntVect iv,
+                         const Side::LoHiSide a_side, const int dir,
+                         const std::vector<int> &robin_comps,
+                         const double a_asymptote) const;
+
+    /// The physical centre of the grid, by the same rule as Grids.cpp: the box
+    /// centre, or the reflective face where exactly one side reflects.
+    std::array<double, CH_SPACEDIM> get_centre() const;
 
     void fill_constant_cell(FArrayBox &out_box, const IntVect iv,
                             const Side::LoHiSide a_side, const int dir,

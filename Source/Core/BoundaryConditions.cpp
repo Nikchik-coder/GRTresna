@@ -34,6 +34,7 @@ BoundaryConditions::params_t::params_t()
     vars_parity_constraint = ConstraintVariables::vars_parity;
     extrapolation_order = 1;
     Vi_extrapolated_at_boundary = false;
+    psi_robin_boundary = false;
 }
 
 void BoundaryConditions::params_t::set_is_periodic(
@@ -105,6 +106,9 @@ void BoundaryConditions::params_t::read_params(GRParmParse &pp)
         set_lo_boundary(loBoundary);
 
     pp.load("Vi_extrapolated_at_boundary", Vi_extrapolated_at_boundary, false);
+    // Outer condition on psi.  Off by default so that every example solved
+    // before 2026-09-15 reproduces; see the header for what it does.
+    pp.load("psi_robin_boundary", psi_robin_boundary, false);
 
     if (extrapolating_boundaries_exist)
     {
@@ -356,9 +360,19 @@ void BoundaryConditions::fill_constraint_box(const Side::LoHiSide a_side,
                 // simplest case - boundary values are extrapolated
                 case EXTRAPOLATING_BC:
                 {
-                    // zero for psi
-                    fill_constant_cell(a_state, iv, a_side, idir, psi_comps,
-                                       0.0);
+                    // zero for psi -- or, with the Robin condition on, the
+                    // homogeneous form of it on the multigrid CORRECTION,
+                    // whose asymptote is 0 rather than 1
+                    if (m_params.psi_robin_boundary)
+                    {
+                        fill_robin_cell(a_state, iv, a_side, idir, psi_comps,
+                                        0.0);
+                    }
+                    else
+                    {
+                        fill_constant_cell(a_state, iv, a_side, idir, psi_comps,
+                                           0.0);
+                    }
 
                     if (m_params.Vi_extrapolated_at_boundary)
                     {
@@ -439,8 +453,16 @@ void BoundaryConditions::fill_boundary_cells_dir(
             {
                 if (filling_solver_vars)
                 {
-                    fill_constant_cell(out_box, iv, a_side, dir, psi_comps,
-                                       1.0);
+                    if (m_params.psi_robin_boundary)
+                    {
+                        fill_robin_cell(out_box, iv, a_side, dir, psi_comps,
+                                        1.0);
+                    }
+                    else
+                    {
+                        fill_constant_cell(out_box, iv, a_side, dir, psi_comps,
+                                           1.0);
+                    }
 
                     if (m_params.Vi_extrapolated_at_boundary)
                     {
@@ -459,6 +481,24 @@ void BoundaryConditions::fill_boundary_cells_dir(
                     fill_extrapolating_cell(out_box, iv, a_side, dir,
                                             comps_vector,
                                             m_params.extrapolation_order);
+                    // psi's outer condition has to be stated HERE too.  This
+                    // is the fill that runs before set_elliptic_terms, so it
+                    // is the one the residual and the elliptic coefficients
+                    // are built from, and it overwrites the solver-var fill
+                    // above at the top of every nonlinear iteration.  A
+                    // linear extrapolation carries no information about the
+                    // 1/r tail, so imposing Robin only on the multigrid
+                    // CORRECTION (whose homogeneous form any converged state
+                    // satisfies trivially, because the correction is zero)
+                    // merely permits the wall value to drift instead of
+                    // pulling it anywhere -- measured 2026-09-15: it gained
+                    // 4.89 % -> 4.55 %, and the 2.67 % seen at 50 iterations
+                    // was an unconverged transient that relaxed back.
+                    if (m_params.psi_robin_boundary)
+                    {
+                        fill_robin_cell(out_box, iv, a_side, dir, psi_comps,
+                                        1.0);
+                    }
                 }
                 break;
             }
@@ -475,6 +515,78 @@ void BoundaryConditions::fill_boundary_cells_dir(
             } // end switch
         }     // end iterate over box
     }         // end iterate over boxes
+}
+
+std::array<double, CH_SPACEDIM> BoundaryConditions::get_centre() const
+{
+    std::array<double, CH_SPACEDIM> centre;
+    FOR1(idir)
+    {
+        const double domain_length =
+            (m_domain_box.bigEnd(idir) - m_domain_box.smallEnd(idir) + 1) * m_dx;
+        centre[idir] = 0.5 * domain_length;
+        const bool lo_reflective =
+            (m_params.lo_boundary[idir] == REFLECTIVE_BC);
+        const bool hi_reflective =
+            (m_params.hi_boundary[idir] == REFLECTIVE_BC);
+        if (lo_reflective && !hi_reflective)
+            centre[idir] = 0.0;
+        else if (hi_reflective && !lo_reflective)
+            centre[idir] = domain_length;
+        else if (hi_reflective && lo_reflective)
+            centre[idir] = 0.0;
+    }
+    return centre;
+}
+
+/// Robin fill.  The exact drainhole has no 1/r term in psi, but the bare-mass
+/// puncture contributes +m/2r, so psi_reg must approach 1 - m/2r; pinning it
+/// to 1 forces the wrong constant and leaves a flat few-per-cent offset over
+/// the whole grid (measured 2026-09-08: +2 % at the throat, +5 % at r = 6).
+/// Imposing (u - a) ~ 1/r instead lets the solve pick the coefficient itself,
+/// which is also the right condition for an ordinary puncture, where the
+/// coefficient is the ADM-mass correction rather than zero.
+void BoundaryConditions::fill_robin_cell(FArrayBox &out_box, const IntVect iv,
+                                         const Side::LoHiSide a_side,
+                                         const int dir,
+                                         const std::vector<int> &robin_comps,
+                                         const double a_asymptote) const
+{
+    // the nearest cell inside the domain along dir, clamped in the others
+    int units_from_edge = (a_side == Side::Hi)
+                              ? iv[dir] - m_domain_box.bigEnd(dir)
+                              : -iv[dir] + m_domain_box.smallEnd(dir);
+    IntVect iv_in = iv;
+    iv_in[dir] += (a_side == Side::Hi) ? -units_from_edge : units_from_edge;
+    FOR(idir)
+    {
+        if (iv_in[idir] > m_domain_box.bigEnd(idir))
+            iv_in[idir] = m_domain_box.bigEnd(idir);
+        else if (iv_in[idir] < m_domain_box.smallEnd(idir))
+            iv_in[idir] = m_domain_box.smallEnd(idir);
+    }
+
+    const std::array<double, CH_SPACEDIM> centre = get_centre();
+    double r_out = 0.0, r_in = 0.0;
+    FOR(idir)
+    {
+        const double x_out = (iv[idir] + 0.5) * m_dx - centre[idir];
+        const double x_in = (iv_in[idir] + 0.5) * m_dx - centre[idir];
+        r_out += x_out * x_out;
+        r_in += x_in * x_in;
+    }
+    r_out = sqrt(r_out);
+    r_in = sqrt(r_in);
+
+    for (int icomp : robin_comps)
+    {
+        // r (u - a) is constant across the boundary.  If either radius is
+        // degenerate the ratio means nothing, so fall back to copying, which
+        // is the r -> infinity limit of the same condition.
+        const double ratio = (r_out > 1e-12) ? (r_in / r_out) : 1.0;
+        out_box(iv, icomp) =
+            a_asymptote + (out_box(iv_in, icomp) - a_asymptote) * ratio;
+    }
 }
 
 void BoundaryConditions::fill_reflective_cell(
