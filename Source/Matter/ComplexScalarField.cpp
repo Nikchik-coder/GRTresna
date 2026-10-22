@@ -65,6 +65,8 @@ void ComplexScalarField::initialise_matter_vars(
                 // momentum; non-winding lumps keep the legacy boson-star ansatz.
                 const Real omega = (m_params.omega > 0.0) ? m_params.omega
                                                           : m_params.scalar_mass;
+                const Real alpha_tot =
+                    BosonStarParams::total_alpha(loc, m_params);
                 for (const auto &L : m_params.lumps)
                 {
                     if (L.amp == 0.0)
@@ -90,10 +92,11 @@ void ComplexScalarField::initialise_matter_vars(
                         phi1 += f;
                         pi1 += BosonStarParams::lump_pi1(loc, L);
                         // Per-lump U(1) phase velocity (mixed-frequency
-                        // selfgrav pairs); global bs_omega when unset.
+                        // selfgrav pairs); global bs_omega when unset.  Divided
+                        // by the superposed lapse, as in compute_emtensor.
                         const Real omega_k =
                             (L.bs_omega > 0.0) ? L.bs_omega : omega;
-                        pi2 += -(omega_k / alpha_k) * f;
+                        pi2 += -(omega_k / alpha_tot) * f;
                     }
                 }
             }
@@ -141,6 +144,7 @@ emtensor_t ComplexScalarField::compute_emtensor(
 
     if (!m_params.lumps.empty())
     {
+        const Real alpha_tot = BosonStarParams::total_alpha(loc, m_params);
         for (const auto &L : m_params.lumps)
         {
             if (L.amp == 0.0)
@@ -167,11 +171,15 @@ emtensor_t ComplexScalarField::compute_emtensor(
                 phi1_k = BosonStarParams::lump_phi1(loc, L);
                 phi2_k = 0.0;
                 pi1_k  = BosonStarParams::lump_pi1(loc, L);
-                // Stationary U(1) momentum uses the star's own lapse alpha(r)
-                // and its own phase velocity (per-lump bs_omega for mixed-
-                // frequency pairs; alpha == 1 for a flat-space table).
+                // Stationary U(1) momentum with the star's own phase velocity
+                // (per-lump bs_omega for mixed-frequency pairs) over the
+                // superposed lapse: the lapse written to the initial data, by
+                // which the bicomplex repaint divides Im Pi.  The star's own
+                // alpha(r) here left the companion's alpha - 1 in rho, a
+                // violation that does not shrink with the grid (2026-10-22).
+                // alpha == 1 for a flat-space table.
                 const Real omega_k = (L.bs_omega > 0.0) ? L.bs_omega : omega;
-                pi2_k = -(omega_k / alpha_k) * phi1_k;
+                pi2_k = -(omega_k / alpha_tot) * phi1_k;
                 BosonStarParams::lump_grad_phi1(loc, L, dphi1_k);
                 dphi2_k = {0.0, 0.0, 0.0}; // phi2_k = 0 => grad phi2_k = 0
             }

@@ -95,6 +95,13 @@ struct params_t
 // fields.  The base table is stored at its own core amplitude phi_c = phi0(0);
 // per-lump amplitude scaling (amp / phi_c) is applied in lump_phi1, matching the
 // Python painter's profile_for_lump scaling.
+//
+// Between the rows the columns are a natural cubic spline, the painter's own
+// interpolant (scipy CubicSpline, bc_type="natural", on the same knots), and
+// grad phi is the spline's exact derivative.  Linear interpolation and a finite
+// difference of it left a sawtooth at the table spacing in rho that does not
+// shrink with the grid, a constraint violation the evolution then starts from
+// (2026-10-22, the Bondi convergence check).
 // ---------------------------------------------------------------------------
 struct qball_table_t
 {
@@ -104,8 +111,65 @@ struct qball_table_t
     // star (3-column table); empty for the flat-space Q-ball (2-column table),
     // in which case alpha is treated as 1 everywhere (flat space).
     std::vector<Real> alpha;
+    // Natural-spline second derivatives at the rows (empty with no column).
+    std::vector<Real> phi0_m2;
+    std::vector<Real> alpha_m2;
     Real phi_c = 0.0; // phi0[0]
 };
+
+// Second derivatives of the natural cubic spline through (x, y): zero at both
+// ends, the tridiagonal continuity system in between (Thomas algorithm).
+inline std::vector<Real> natural_spline_m2(const std::vector<Real> &x,
+                                           const std::vector<Real> &y)
+{
+    const std::size_t n = x.size();
+    std::vector<Real> m2(n, 0.0);
+    if (n < 3)
+        return m2;
+    std::vector<Real> c(n, 0.0), d(n, 0.0);
+    for (std::size_t i = 1; i + 1 < n; ++i)
+    {
+        const Real h0    = x[i] - x[i - 1];
+        const Real h1    = x[i + 1] - x[i];
+        const Real rhs   = 6.0 * ((y[i + 1] - y[i]) / h1 - (y[i] - y[i - 1]) / h0);
+        const Real denom = 2.0 * (h0 + h1) - h0 * c[i - 1];
+        c[i]             = h1 / denom;
+        d[i]             = (rhs - h0 * d[i - 1]) / denom;
+    }
+    for (std::size_t i = n - 2; i >= 1; --i)
+        m2[i] = d[i] - c[i] * m2[i + 1];
+    return m2;
+}
+
+// Row lo with x[lo] <= r < x[lo + 1], for x[0] < r < x[n - 1].
+inline std::size_t table_bracket(const std::vector<Real> &x, Real r)
+{
+    std::size_t lo = 0, hi = x.size() - 1;
+    while (hi - lo > 1)
+    {
+        const std::size_t mid = (lo + hi) / 2;
+        if (x[mid] <= r)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+// Value and first derivative of the spline on [x[lo], x[lo + 1]].
+inline void spline_eval(const std::vector<Real> &x, const std::vector<Real> &y,
+                        const std::vector<Real> &m2, std::size_t lo, Real r,
+                        Real &value, Real &deriv)
+{
+    const std::size_t hi = lo + 1;
+    const Real h         = x[hi] - x[lo];
+    const Real a         = (x[hi] - r) / h;
+    const Real b         = (r - x[lo]) / h;
+    value = a * y[lo] + b * y[hi] +
+            ((a * a * a - a) * m2[lo] + (b * b * b - b) * m2[hi]) * h * h / 6.0;
+    deriv = (y[hi] - y[lo]) / h +
+            ((3.0 * b * b - 1.0) * m2[hi] - (3.0 * a * a - 1.0) * m2[lo]) * h / 6.0;
+}
 
 inline const qball_table_t &qball_load_table(const std::string &path)
 {
@@ -137,6 +201,9 @@ inline const qball_table_t &qball_load_table(const std::string &path)
             Real rr = 0.0, pp = 0.0, aa = 0.0;
             if (!(iss >> rr >> pp))
                 continue;
+            // The spline needs strictly increasing knots.
+            if (!table.r.empty() && rr <= table.r.back())
+                continue;
             table.r.push_back(rr);
             table.phi0.push_back(pp);
             if (iss >> aa)
@@ -149,59 +216,54 @@ inline const qball_table_t &qball_load_table(const std::string &path)
     // inconsistent and we fall back to alpha = 1).
     if (table.alpha.size() != table.phi0.size())
         table.alpha.clear();
+    table.phi0_m2 = natural_spline_m2(table.r, table.phi0);
+    if (!table.alpha.empty())
+        table.alpha_m2 = natural_spline_m2(table.r, table.alpha);
 
     auto inserted = cache.emplace(path, std::move(table));
     return inserted.first->second;
 }
 
-// Linear interpolation of the (optional) lapse column alpha(r).  Returns 1.0
-// when the table has no lapse column (flat-space Q-ball) or is empty.
+// Spline of the (optional) lapse column alpha(r).  Returns 1.0 when the table
+// has no lapse column (flat-space Q-ball) or is empty.  Held constant outside
+// the table, as the painter clips r to it.
 inline Real qball_alpha_table_interp(const qball_table_t &table, Real r)
 {
-    const std::size_t n = table.alpha.size();
-    if (n == 0)
+    if (table.alpha.empty())
         return 1.0;
     if (r <= table.r.front())
         return table.alpha.front();
     if (r >= table.r.back())
         return table.alpha.back();
-
-    std::size_t lo = 0, hi = n - 1;
-    while (hi - lo > 1)
-    {
-        const std::size_t mid = (lo + hi) / 2;
-        if (table.r[mid] <= r)
-            lo = mid;
-        else
-            hi = mid;
-    }
-    const Real span = table.r[hi] - table.r[lo];
-    const Real t    = (span > 0.0) ? (r - table.r[lo]) / span : 0.0;
-    return table.alpha[lo] + t * (table.alpha[hi] - table.alpha[lo]);
+    Real value = 0.0, deriv = 0.0;
+    spline_eval(table.r, table.alpha, table.alpha_m2, table_bracket(table.r, r),
+                r, value, deriv);
+    return value;
 }
 
 inline Real qball_table_interp(const qball_table_t &table, Real r)
 {
-    const std::size_t n = table.r.size();
-    if (n == 0)
+    if (table.r.empty())
         return 0.0;
     if (r <= table.r.front())
         return table.phi0.front();
     if (r >= table.r.back())
         return table.phi0.back();
+    Real value = 0.0, deriv = 0.0;
+    spline_eval(table.r, table.phi0, table.phi0_m2, table_bracket(table.r, r), r,
+                value, deriv);
+    return value;
+}
 
-    std::size_t lo = 0, hi = n - 1;
-    while (hi - lo > 1)
-    {
-        const std::size_t mid = (lo + hi) / 2;
-        if (table.r[mid] <= r)
-            lo = mid;
-        else
-            hi = mid;
-    }
-    const Real span = table.r[hi] - table.r[lo];
-    const Real t    = (span > 0.0) ? (r - table.r[lo]) / span : 0.0;
-    return table.phi0[lo] + t * (table.phi0[hi] - table.phi0[lo]);
+// d phi0 / dr of the spline; zero outside the table, where phi0 is constant.
+inline Real qball_table_dphi_dr(const qball_table_t &table, Real r)
+{
+    if (table.r.size() < 2 || r <= table.r.front() || r >= table.r.back())
+        return 0.0;
+    Real value = 0.0, deriv = 0.0;
+    spline_eval(table.r, table.phi0, table.phi0_m2, table_bracket(table.r, r), r,
+                value, deriv);
+    return deriv;
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +429,19 @@ inline Real angular_factor(int m, Real dx, Real dy, Real w)
     }
 }
 
+inline std::array<Real, 3> angular_factor_grad(int m, Real dx, Real dy, Real w)
+{
+    switch (m)
+    {
+    case 1:
+        return {1.0 / w, 0.0, 0.0};
+    case 2:
+        return {2.0 * dx / (w * w), -2.0 * dy / (w * w), 0.0};
+    default:
+        return {0.0, 0.0, 0.0};
+    }
+}
+
 inline Real lump_envelope(Real r2, Real r, Real w, int profile)
 {
     if (profile == 1)
@@ -422,7 +497,8 @@ inline Real lump_phi1(const RealVect &loc, const boson_lump_t &L)
 // other profile / a table without a lapse column (flat space).  A boson star is
 // stationary, NOT static: alpha dips well below 1 in the core, and the U(1)
 // momentum Pi_im = -(omega/alpha) phi0 must use it or the seed is not an
-// equilibrium and radiates.
+// equilibrium and radiates.  Non-winding lumps divide by the superposition of
+// these lapses (total_alpha), the lapse the evolution starts from.
 inline Real lump_alpha(const RealVect &loc, const boson_lump_t &L)
 {
     if (L.profile != 3)
@@ -441,6 +517,30 @@ inline void lump_grad_phi1(const RealVect &loc, const boson_lump_t &L,
     {
         grad = {0.0, 0.0, 0.0};
         return;
+    }
+    if (L.profile == 3)
+    {
+        // The tabulated star: the exact gradient of the spline, which is what
+        // the evolution's stencils converge to on the painted field.
+        const qball_table_t &table = qball_load_table(L.profile_path);
+        if (!table.phi0.empty() && table.phi_c > 0.0)
+        {
+            const std::array<Real, 3> rel = {loc[0] - L.center[0],
+                                             loc[1] - L.center[1],
+                                             loc[2] - L.center[2]};
+            const Real r = std::sqrt(rel[0] * rel[0] + rel[1] * rel[1] +
+                                     rel[2] * rel[2]);
+            const Real env     = qball_table_interp(table, r) / table.phi_c;
+            const Real denv_dr = qball_table_dphi_dr(table, r) / table.phi_c;
+            const Real ang = angular_factor(L.mode, rel[0], rel[1], L.width);
+            const std::array<Real, 3> dang =
+                angular_factor_grad(L.mode, rel[0], rel[1], L.width);
+            const Real inv_r = (r > 0.0) ? 1.0 / r : 0.0;
+            for (int i = 0; i < 3; ++i)
+                grad[i] =
+                    L.amp * (ang * denv_dr * rel[i] * inv_r + env * dang[i]);
+            return;
+        }
     }
     const Real eps = 1.0e-3 * L.width;
     for (int i = 0; i < 3; ++i)
@@ -586,28 +686,6 @@ inline Real total_pi1(const RealVect &loc, const params_t &p)
     return sum;
 }
 
-// Imaginary-channel (U(1) phase) momentum Pi_im for a stationary boson star:
-//   Pi_im = -(omega / alpha(r)) * phi1
-// with alpha(r) the star's lapse (== 1 for a flat-space Q-ball table, which
-// recovers the previous Pi_im = -omega phi1).  omega is the global U(1) phase
-// velocity (bs_omega; falls back to the scalar mass when unset).
-inline Real total_pi2(const RealVect &loc, const params_t &p, Real omega)
-{
-    if (!p.lumps.empty())
-    {
-        Real sum = 0.0;
-        for (const auto &L : p.lumps)
-        {
-            const Real a = lump_alpha(loc, L);
-            const Real omega_k = (L.bs_omega > 0.0) ? L.bs_omega : omega;
-            sum += -(omega_k / a) * lump_phi1(loc, L);
-        }
-        return sum;
-    }
-    // Legacy single centered star (no lumps): alpha = 1 (Gaussian ansatz).
-    return -omega * total_phi1(loc, p);
-}
-
 // Stationary-lapse superposition for the initial gauge:
 //   alpha(loc) = 1 + sum_k (alpha_k(loc) - 1)
 // which is exactly alpha(r) for a single isolated star and -> 1 far away.
@@ -621,6 +699,32 @@ inline Real total_alpha(const RealVect &loc, const params_t &p)
     for (const auto &L : p.lumps)
         alpha += (lump_alpha(loc, L) - 1.0);
     return (alpha > 1.0e-3) ? alpha : 1.0e-3;
+}
+
+// Imaginary-channel (U(1) phase) momentum Pi_im for a stationary boson star:
+//   Pi_im = -(omega / alpha) * phi1
+// with alpha the superposed lapse total_alpha (== the star's own alpha(r) for
+// one star; == 1 for a flat-space Q-ball table, which recovers the previous
+// Pi_im = -omega phi1).  The evolution starts from that lapse and the
+// bicomplex repaint divides by it, so with the star's own lapse here the
+// companion's alpha - 1 left a constraint violation in rho that does not
+// shrink with the grid (2026-10-22).  omega is the global U(1) phase velocity
+// (bs_omega; falls back to the scalar mass when unset).
+inline Real total_pi2(const RealVect &loc, const params_t &p, Real omega)
+{
+    if (!p.lumps.empty())
+    {
+        const Real a = total_alpha(loc, p);
+        Real sum     = 0.0;
+        for (const auto &L : p.lumps)
+        {
+            const Real omega_k = (L.bs_omega > 0.0) ? L.bs_omega : omega;
+            sum += -(omega_k / a) * lump_phi1(loc, L);
+        }
+        return sum;
+    }
+    // Legacy single centered star (no lumps): alpha = 1 (Gaussian ansatz).
+    return -omega * total_phi1(loc, p);
 }
 
 inline void total_grad_phi1(const RealVect &loc, const params_t &p,
